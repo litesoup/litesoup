@@ -65,4 +65,11 @@ log_info "integration: assert no anonymous users"
 count=$(mariadb_root -Nse "SELECT COUNT(*) FROM mysql.user WHERE User='';")
 [ "${count}" = "0" ]
 
+log_info "integration: ensure_wp_cli"
+source install/lib/wp_cli.sh
+ensure_wp_cli
+
+log_info "integration: assert wp-cli reports core info"
+wp --info | grep -q 'WP-CLI version'
+
 log_info "integration: PASS"
