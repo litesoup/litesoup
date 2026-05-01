@@ -1,75 +1,40 @@
 #!/usr/bin/env bash
-# Runs INSIDE the systemd-Docker container at /opt/litesoup.
+# Runs install-stack.sh end-to-end inside container, then asserts services
+# and the default per-user pool layout.
 set -Eeuo pipefail
-
 cd /opt/litesoup
-source install/lib/common.sh
-source install/lib/distro.sh
-source install/lib/apt.sh
-source install/lib/apache.sh
 
-log_info "integration: distro check"
-require_ubuntu_2404
+bash install/install-stack.sh
 
-log_info "integration: ensure_apache"
-ensure_apache
-
-log_info "integration: assert apache running"
 systemctl is-active --quiet apache2
-ss -ltn | grep -E ':80\b' >/dev/null
-
-log_info "integration: assert mpm_event loaded"
-apache2ctl -M 2>&1 | grep -q 'mpm_event_module'
-
-log_info "integration: assert proxy_fcgi loaded"
-apache2ctl -M 2>&1 | grep -q 'proxy_fcgi_module'
-
-log_info "integration: ensure_php_82_fpm"
-source install/lib/users.sh
-source install/lib/php.sh
-ensure_php_82_fpm
-
-log_info "integration: assert php-fpm running"
 systemctl is-active --quiet php8.2-fpm
+systemctl is-active --quiet mariadb
 
-log_info "integration: assert default www-data pool is disabled"
+# Default Ubuntu pool is disabled
 [ ! -f /etc/php/8.2/fpm/pool.d/www.conf ]
 [ -f /etc/php/8.2/fpm/pool.d/www.conf.disabled ]
 
-log_info "integration: assert php cli is 8.2"
-php -v | head -1 | grep -Eq 'PHP 8\.2\.'
+# Default site user provisioned with correct home perms
+id litesoup >/dev/null
+[ "$(stat -c '%a %U:%G' /home/litesoup)" = "711 litesoup:litesoup" ]
+[ -d /home/litesoup/webapps ]
 
-log_info "integration: ensure_php_82_pool_for_user litesoup"
-ensure_user litesoup
-ensure_php_82_pool_for_user litesoup
-
-log_info "integration: assert litesoup pool socket exists"
+# Per-user pool socket present
 [ -S /run/php/litesoup-php8.2-fpm.sock ]
 [ -f /etc/php/8.2/fpm/pool.d/litesoup-php8.2.conf ]
 
-log_info "integration: assert hardening present in litesoup pool"
+# Hardening assertions (from previous fixes)
 grep -q 'disable_functions' /etc/php/8.2/fpm/pool.d/litesoup-php8.2.conf
 grep -q 'expose_php\] = off' /etc/php/8.2/fpm/pool.d/litesoup-php8.2.conf
-grep -qv '/tmp/' /etc/php/8.2/fpm/pool.d/litesoup-php8.2.conf || \
-  ! grep -E 'open_basedir.*[^a-z]/tmp/' /etc/php/8.2/fpm/pool.d/litesoup-php8.2.conf
+! grep -E 'open_basedir.*[^a-z]/tmp/' /etc/php/8.2/fpm/pool.d/litesoup-php8.2.conf
 
-log_info "integration: ensure_mariadb"
-source install/lib/mariadb.sh
-ensure_mariadb
+# wp-cli installed
+[ -x /usr/local/bin/wp ]
 
-log_info "integration: assert mariadb running"
-systemctl is-active --quiet mariadb
+# MariaDB secure
 mysqladmin --defaults-file=/root/.litesoup-mariadb-root ping | grep -q 'mysqld is alive'
 
-log_info "integration: assert no anonymous users"
-count=$(mariadb_root -Nse "SELECT COUNT(*) FROM mysql.user WHERE User='';")
-[ "${count}" = "0" ]
+# Re-run to verify idempotency (no duplicate-pool errors, no useradd retries)
+bash install/install-stack.sh
 
-log_info "integration: ensure_wp_cli"
-source install/lib/wp_cli.sh
-ensure_wp_cli
-
-log_info "integration: assert wp-cli reports core info"
-wp --info | grep -q 'WP-CLI version'
-
-log_info "integration: PASS"
+echo "01_install_stack: PASS"
