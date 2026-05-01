@@ -1,0 +1,27 @@
+# syntax=docker/dockerfile:1.7
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    LC_ALL=C.UTF-8 \
+    LANG=C.UTF-8 \
+    container=docker
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        systemd systemd-sysv dbus \
+        ca-certificates curl wget gnupg sudo lsb-release \
+        software-properties-common iproute2 procps \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Strip systemd units that fight with containers
+RUN find /lib/systemd/system/sysinit.target.wants -type l ! -name 'systemd-tmpfiles-setup*' -delete \
+    && rm -f /lib/systemd/system/multi-user.target.wants/* \
+              /etc/systemd/system/*.wants/* \
+              /lib/systemd/system/local-fs.target.wants/* \
+              /lib/systemd/system/sockets.target.wants/*udev* \
+              /lib/systemd/system/sockets.target.wants/*initctl* \
+              /lib/systemd/system/basic.target.wants/* \
+              /lib/systemd/system/anaconda.target.wants/*
+
+VOLUME [ "/sys/fs/cgroup", "/run", "/tmp" ]
+STOPSIGNAL SIGRTMIN+3
+CMD ["/lib/systemd/systemd"]
