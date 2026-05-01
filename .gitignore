@@ -25,3 +25,9 @@
 # Tooling caches
 .cache/
 node_modules/
+
+# Plan I.A — local test artifacts
+test/.tmp/
+test/bats/bats-core/
+test/bats/bats-support/
+test/bats/bats-assert/
