@@ -53,4 +53,16 @@ grep -q 'expose_php\] = off' /etc/php/8.2/fpm/pool.d/litesoup-php8.2.conf
 grep -qv '/tmp/' /etc/php/8.2/fpm/pool.d/litesoup-php8.2.conf || \
   ! grep -E 'open_basedir.*[^a-z]/tmp/' /etc/php/8.2/fpm/pool.d/litesoup-php8.2.conf
 
+log_info "integration: ensure_mariadb"
+source install/lib/mariadb.sh
+ensure_mariadb
+
+log_info "integration: assert mariadb running"
+systemctl is-active --quiet mariadb
+mysqladmin --defaults-file=/root/.litesoup-mariadb-root ping | grep -q 'mysqld is alive'
+
+log_info "integration: assert no anonymous users"
+count=$(mariadb_root -Nse "SELECT COUNT(*) FROM mysql.user WHERE User='';")
+[ "${count}" = "0" ]
+
 log_info "integration: PASS"
