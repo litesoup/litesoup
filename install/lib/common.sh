@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 # install/lib/common.sh — shared helpers. Source with `source`, do not execute.
+#
+# IMPORTANT: sourcing this file enables `set -Eeuo pipefail` and installs an
+# ERR trap that exits the calling shell on any uncaught error. Any script that
+# sources this opts into fail-fast semantics intentionally.
 
 # Idempotent guard: don't re-source.
 [ -n "${LITESOUP_COMMON_SH:-}" ] && return 0
@@ -18,7 +22,9 @@ log_error() { printf '%s [ERROR] %s\n' "$(_ts)" "$*" >&2; }
 # Run a command unless DRY_RUN=1, in which case print the intended command.
 run_or_dryrun() {
   if [ "${DRY_RUN}" = "1" ]; then
-    printf '%s [DRYRUN] %s\n' "$(_ts)" "$*" >&2
+    printf '%s [DRYRUN]' "$(_ts)" >&2
+    printf ' %q' "$@" >&2
+    printf '\n' >&2
     return 0
   fi
   "$@"
@@ -27,7 +33,7 @@ run_or_dryrun() {
 require_root() {
   if [ "${EUID:-$(id -u)}" -ne 0 ]; then
     log_error "must run as root (use sudo)"
-    return 1
+    exit 1
   fi
 }
 
