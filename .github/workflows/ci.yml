@@ -18,7 +18,10 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y shellcheck
       - name: Run shellcheck
         run: |
-          shellcheck install/install-stack.sh \
+          # -x: follow sourced files via `# shellcheck source=` annotations
+          # -e SC1091: ignore "can't follow runtime-resolved sources" info; -x covers the real ones
+          shellcheck -x -e SC1091 \
+                     install/install-stack.sh \
                      install/lib/*.sh \
                      site/*.sh \
                      test/docker/run-integration.sh \

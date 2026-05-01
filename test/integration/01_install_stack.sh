@@ -26,7 +26,10 @@ id litesoup >/dev/null
 # Hardening assertions (from previous fixes)
 grep -q 'disable_functions' /etc/php/8.2/fpm/pool.d/litesoup-php8.2.conf
 grep -q 'expose_php\] = off' /etc/php/8.2/fpm/pool.d/litesoup-php8.2.conf
-! grep -E 'open_basedir.*[^a-z]/tmp/' /etc/php/8.2/fpm/pool.d/litesoup-php8.2.conf
+if grep -E 'open_basedir.*[^a-z]/tmp/' /etc/php/8.2/fpm/pool.d/litesoup-php8.2.conf; then
+  echo "FAIL: /tmp/ leaked into open_basedir" >&2
+  exit 1
+fi
 
 # wp-cli installed
 [ -x /usr/local/bin/wp ]

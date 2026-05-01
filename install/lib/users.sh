@@ -7,6 +7,7 @@
 [ -n "${LITESOUP_USERS_SH:-}" ] && return 0
 LITESOUP_USERS_SH=1
 
+# shellcheck disable=SC2034  # consumed by callers after sourcing
 DEFAULT_SITE_USER="litesoup"
 
 ensure_user() {
