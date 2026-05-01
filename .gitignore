@@ -1,0 +1,27 @@
+# Build artifacts
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+
+# Go
+/vendor/
+*.test
+*.prof
+
+# Local state
+.env
+.env.local
+*.log
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Tooling caches
+.cache/
+node_modules/
