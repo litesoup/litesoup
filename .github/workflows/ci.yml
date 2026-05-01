@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  shellcheck:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Run shellcheck
+        run: |
+          # -x: follow sourced files via `# shellcheck source=` annotations
+          # -e SC1091: ignore "can't follow runtime-resolved sources" info; -x covers the real ones
+          shellcheck -x -e SC1091 \
+                     install/install-stack.sh \
+                     install/lib/*.sh \
+                     site/*.sh \
+                     test/docker/run-integration.sh \
+                     test/integration/*.sh
+
+  bats-unit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - name: Run bats unit tests
+        run: ./test/bats/bats-core/bin/bats test/bats/
+
+  integration-install-stack:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - name: Build + run install-stack integration
+        run: ./test/docker/run-integration.sh 01_install_stack.sh
+
+  integration-site-create:
+    runs-on: ubuntu-24.04
+    needs: [integration-install-stack]
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - name: site-create integration
+        run: ./test/docker/run-integration.sh 02_site_create.sh
+
+  integration-site-delete:
+    runs-on: ubuntu-24.04
+    needs: [integration-site-create]
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - name: site-delete integration
+        run: ./test/docker/run-integration.sh 03_site_delete.sh
