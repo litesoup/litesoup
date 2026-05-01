@@ -47,4 +47,10 @@ log_info "integration: assert litesoup pool socket exists"
 [ -S /run/php/litesoup-php8.2-fpm.sock ]
 [ -f /etc/php/8.2/fpm/pool.d/litesoup-php8.2.conf ]
 
+log_info "integration: assert hardening present in litesoup pool"
+grep -q 'disable_functions' /etc/php/8.2/fpm/pool.d/litesoup-php8.2.conf
+grep -q 'expose_php\] = off' /etc/php/8.2/fpm/pool.d/litesoup-php8.2.conf
+grep -qv '/tmp/' /etc/php/8.2/fpm/pool.d/litesoup-php8.2.conf || \
+  ! grep -E 'open_basedir.*[^a-z]/tmp/' /etc/php/8.2/fpm/pool.d/litesoup-php8.2.conf
+
 log_info "integration: PASS"

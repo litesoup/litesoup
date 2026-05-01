@@ -96,6 +96,12 @@ ensure_php_82_pool_for_user() {
         "${repo_root}/templates/php/pool.conf.tmpl" >"${conf}"
   fi
 
+  # Validate the new pool config before asking systemd to reload — fail fast
+  # if the rendered template is broken.
+  if [ "${DRY_RUN}" != "1" ]; then
+    "/usr/sbin/php-fpm${v}" --test 2>/dev/null \
+      || { log_error "php: pool config test failed for php${v}-fpm"; return 1; }
+  fi
   run_or_dryrun systemctl reload "php${v}-fpm" \
     || run_or_dryrun systemctl restart "php${v}-fpm"
 }
