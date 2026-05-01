@@ -45,8 +45,58 @@ ensure_ppa() {
     log_info "apt: PPA ${ppa} already added (${probe} exists)"
     return 0
   fi
-  ensure_pkgs software-properties-common
+  ensure_pkgs software-properties-common gnupg
   log_info "apt: adding PPA ${ppa}"
-  run_or_dryrun add-apt-repository -y "${ppa}"
+
+  # Try add-apt-repository first; if Launchpad API is unreachable (504),
+  # fall back to manual PPA registration with direct key import.
+  if ! run_or_dryrun add-apt-repository -y "${ppa}" 2>/tmp/ppa_err.log; then
+    if grep -q '504\|Gateway Time-out\|timed out' /tmp/ppa_err.log 2>/dev/null; then
+      log_info "apt: Launchpad API unreachable, registering PPA manually"
+      _ensure_ppa_manual "${ppa}" "${probe}"
+    else
+      log_error "apt: add-apt-repository failed for ${ppa}"
+      cat /tmp/ppa_err.log >&2
+      return 1
+    fi
+  fi
   _APT_UPDATED=0   # force re-update on next call
+}
+
+# Manual PPA registration (fallback when Launchpad API is unreachable).
+# Extracts owner/name from ppa:owner/name format, imports the signing key
+# from keyserver, and writes a deb822 .sources file.
+_ensure_ppa_manual() {
+  local ppa="$1" probe="$2"
+  # ppa:ondrej/php -> owner=ondrej, name=php
+  local owner="${ppa#ppa:}"; owner="${owner%%/*}"
+  local name="${ppa#*/}"
+
+  if [ "${DRY_RUN}" = "1" ]; then
+    log_info "[DRYRUN] would install GPG key for ${owner}/ppa"
+    return 0
+  fi
+
+  local keyring="/usr/share/keyrings/${owner}-ppa.gpg"
+  case "${owner}/${name}" in
+    ondrej/php)
+      gpg --batch --no-tty --keyserver keyserver.ubuntu.com --recv-keys 14AA40EC0831756756D7F66C4F4EA0AAE5267A6C 2>/dev/null || \
+      gpg --batch --no-tty --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 14AA40EC0831756756D7F66C4F4EA0AAE5267A6C
+      gpg --export --armor 14AA40EC0831756756D7F66C4F4EA0AAE5267A6C | gpg --dearmor -o "${keyring}"
+      ;;
+    *)
+      log_error "apt: no manual key mapping for PPA ${ppa}"
+      return 1
+      ;;
+  esac
+
+  local repo_url="https://ppa.launchpadcontent.net/${owner}/${name}/ubuntu"
+  cat > "${probe}" <<EOF
+Types: deb
+URIs: ${repo_url}
+Suites: noble
+Components: main
+Signed-By: ${keyring}
+EOF
+  log_info "apt: manually registered PPA ${ppa} at ${probe}"
 }
