@@ -59,3 +59,27 @@ setup() {
   DRY_RUN=1 run -0 ensure_php_82_fpm
   assert_output --partial "PKGS: php8.2-fpm"
 }
+
+@test "ensure_php_pool_for_user rejects unsupported version" {
+  ensure_user() { :; }; export -f ensure_user
+  run -1 ensure_php_pool_for_user alice "7.4"
+}
+
+@test "ensure_php_pool_for_user dry-run renders version-specific pool" {
+  ensure_user() { :; }; export -f ensure_user
+  systemctl() { echo "SYSTEMCTL: $*"; }; export -f systemctl
+  log_info() { echo "INFO: $*"; }; export -f log_info
+
+  DRY_RUN=1 run -0 ensure_php_pool_for_user alice "8.3"
+  assert_output --partial "INFO: php: creating pool alice-php8.3"
+  assert_output --partial "/run/php/alice-php8.3-fpm.sock"
+  refute_output --partial "alice-php8.2"
+}
+
+@test "ensure_php_82_pool_for_user shim still works (deprecated)" {
+  ensure_user() { :; }; export -f ensure_user
+  log_info() { echo "INFO: $*"; }; export -f log_info
+
+  DRY_RUN=1 run -0 ensure_php_82_pool_for_user alice
+  assert_output --partial "alice-php8.2"
+}

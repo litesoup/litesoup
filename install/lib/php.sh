@@ -78,11 +78,20 @@ php_fpm_socket_for_user() {
   echo "/run/php/${user}-php${v}-fpm.sock"
 }
 
-# Render and install a per-user FPM pool config, then reload php-fpm.
-# Idempotent: re-running with the same user is a no-op.
-ensure_php_82_pool_for_user() {
+# ensure_php_pool_for_user USER VERSION -- create a per-user FPM pool for
+# PHP <VERSION>, owned by USER, listening on /run/php/<USER>-php<VERSION>-fpm.sock.
+# Idempotent. Validates that PHP <VERSION> is installed before writing the pool.
+ensure_php_pool_for_user() {
   local user="${1:?user required}"
-  local v="${PHP_VERSION_DEFAULT}"
+  local v="${2:?version required}"
+  validate_php_version "${v}" \
+    || { log_error "php: unsupported version ${v}"; return 1; }
+
+  if [ "${DRY_RUN}" != "1" ] && [ ! -d "/etc/php/${v}/fpm/pool.d" ]; then
+    log_error "php: php${v}-fpm is not installed (run install-stack with --php-versions including ${v})"
+    return 1
+  fi
+
   local pool="${user}-php${v}"
   local conf="/etc/php/${v}/fpm/pool.d/${pool}.conf"
   local socket
@@ -120,12 +129,16 @@ ensure_php_82_pool_for_user() {
         "${repo_root}/templates/php/pool.conf.tmpl" >"${conf}"
   fi
 
-  # Validate the new pool config before asking systemd to reload — fail fast
-  # if the rendered template is broken.
   if [ "${DRY_RUN}" != "1" ]; then
     "/usr/sbin/php-fpm${v}" --test 2>/dev/null \
       || { log_error "php: pool config test failed for php${v}-fpm"; return 1; }
   fi
   run_or_dryrun systemctl reload "php${v}-fpm" \
     || run_or_dryrun systemctl restart "php${v}-fpm"
+}
+
+# DEPRECATED -- kept as a back-compat shim for v0.1.0 callers. Removed in v0.3.0.
+ensure_php_82_pool_for_user() {
+  log_warn "ensure_php_82_pool_for_user is deprecated; use ensure_php_pool_for_user <user> 8.2"
+  ensure_php_pool_for_user "${1}" "8.2"
 }
