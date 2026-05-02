@@ -22,16 +22,27 @@ source "${REPO_ROOT}/install/lib/php.sh"
 # shellcheck source=../install/lib/mariadb.sh
 source "${REPO_ROOT}/install/lib/mariadb.sh"
 
+# Test hook: when LITESOUP_TEST_STUBS is set, source it after the lib block so
+# bats can replace functions that need real root / a real system. Production
+# callers never set this variable.
+if [ -n "${LITESOUP_TEST_STUBS:-}" ] && [ -f "${LITESOUP_TEST_STUBS}" ]; then
+  # shellcheck disable=SC1090
+  source "${LITESOUP_TEST_STUBS}"
+fi
+
 DOMAIN=""
 SITE_USER="${DEFAULT_SITE_USER}"
+PHP_VERSION="${PHP_VERSION_DEFAULT}"
 
 usage() {
   cat <<'EOF'
 litesoup site-create -- provision a WordPress site
 
-Usage: sudo bash site-create.sh --domain=DOMAIN [--user=NAME] [--dry-run]
+Usage: sudo bash site-create.sh --domain=DOMAIN [--user=NAME] [--php=X.Y] [--dry-run]
   --user=NAME   System user that will own the docroot and run PHP-FPM
                 (default: litesoup; created if missing)
+  --php=X.Y     PHP version for this site (default: PHP_VERSION_DEFAULT, 8.2;
+                allowed: any version installed by install-stack)
 EOF
 }
 
@@ -41,6 +52,7 @@ parse_args() {
     case "${arg}" in
       --domain=*) DOMAIN="${arg#*=}" ;;
       --user=*)   SITE_USER="${arg#*=}" ;;
+      --php=*)    PHP_VERSION="${arg#*=}" ;;
       --dry-run)  DRY_RUN=1 ;;
       --help|-h)  usage; exit 0 ;;
       *) log_error "unknown argument: ${arg}"; usage; exit 64 ;;
@@ -56,6 +68,8 @@ parse_args() {
   if ! [[ "${SITE_USER}" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then
     log_error "invalid user name: ${SITE_USER}"; exit 64
   fi
+  validate_php_version "${PHP_VERSION}" \
+    || { log_error "unsupported PHP version: ${PHP_VERSION} (allowed: ${SUPPORTED_PHP_VERSIONS[*]})"; exit 64; }
 }
 
 # Derive a DB identifier from the domain (mariadb name limit = 64; we stay short).
@@ -94,7 +108,7 @@ create_docroot() {
 
 write_vhost() {
   local socket vhost
-  socket="$(php_fpm_socket_for_user "${SITE_USER}" 8.2)"
+  socket="$(php_fpm_socket_for_user "${SITE_USER}" "${PHP_VERSION}")"
   vhost="/etc/apache2/sites-available/${DOMAIN}.conf"
 
   if [ "${DRY_RUN}" = "1" ]; then
@@ -124,9 +138,9 @@ main() {
   parse_args "$@"
   require_root
 
-  log_info "site-create: ${DOMAIN} (owner=${SITE_USER})"
+  log_info "site-create: ${DOMAIN} (owner=${SITE_USER}, php=${PHP_VERSION})"
   ensure_user "${SITE_USER}"
-  ensure_php_82_pool_for_user "${SITE_USER}"
+  ensure_php_pool_for_user "${SITE_USER}" "${PHP_VERSION}"
   create_database
   create_docroot
   write_vhost
@@ -134,6 +148,7 @@ main() {
 
   log_info "site-create: ${DOMAIN} -> http://${DOMAIN}/wp-admin/install.php"
   log_info "site-create: docroot ${DOCROOT}"
+  log_info "site-create: php  ${PHP_VERSION} (socket $(php_fpm_socket_for_user "${SITE_USER}" "${PHP_VERSION}"))"
 }
 
 main "$@"
