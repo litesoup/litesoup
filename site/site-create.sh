@@ -43,17 +43,25 @@ SITE_USER="${DEFAULT_SITE_USER}"
 PHP_VERSION="${PHP_VERSION_DEFAULT}"
 TLS_MODE="none"
 TLS_EMAIL=""
+POOL_TIER="small"
 
 usage() {
   cat <<'EOF'
 litesoup site-create -- provision a WordPress site
 
 Usage: sudo bash site-create.sh --domain=DOMAIN [--user=NAME] [--php=X.Y] \
+                                [--tier=small|medium|large] \
                                 [--tls=letsencrypt|self-signed|none] [--email=ADDR] \
                                 [--dry-run]
   --user=NAME    System user that will own the docroot and run PHP-FPM
                  (default: litesoup; created if missing)
   --php=X.Y      PHP version for this site (default: PHP_VERSION_DEFAULT)
+  --tier=TIER    FPM pool sizing (default: small -- v0.3 back-compat).
+                 Tier is per per-user+version pool, not per site -- multiple
+                 sites sharing the pool share the tier.
+                 small:  5 children,  ondemand (low-traffic + dev)
+                 medium: 20 children, dynamic  (production sites)
+                 large:  50 children, dynamic  (high-traffic)
   --tls=MODE     TLS mode (default: none -- v0.2 back-compat).
                  letsencrypt: real LE cert via HTTP-01 (requires --email)
                  self-signed: openssl-generated cert at /etc/litesoup/ssl/<d>/
@@ -69,6 +77,7 @@ parse_args() {
       --domain=*) DOMAIN="${arg#*=}" ;;
       --user=*)   SITE_USER="${arg#*=}" ;;
       --php=*)    PHP_VERSION="${arg#*=}" ;;
+      --tier=*)   POOL_TIER="${arg#*=}" ;;
       --tls=*)    TLS_MODE="${arg#*=}" ;;
       --email=*)  TLS_EMAIL="${arg#*=}" ;;
       --dry-run)  DRY_RUN=1 ;;
@@ -88,6 +97,10 @@ parse_args() {
   fi
   validate_php_version "${PHP_VERSION}" \
     || { log_error "unsupported PHP version: ${PHP_VERSION} (allowed: ${SUPPORTED_PHP_VERSIONS[*]})"; exit 64; }
+  case "${POOL_TIER}" in
+    small|medium|large) ;;
+    *) log_error "--tier must be one of: small, medium, large (got '${POOL_TIER}')"; exit 64 ;;
+  esac
   case "${TLS_MODE}" in
     letsencrypt|self-signed|none) ;;
     *) log_error "--tls must be one of: letsencrypt, self-signed, none (got '${TLS_MODE}')"; exit 64 ;;
@@ -158,7 +171,7 @@ main() {
 
   log_info "site-create: ${DOMAIN} (owner=${SITE_USER}, php=${PHP_VERSION}, tls=${TLS_MODE})"
   ensure_user "${SITE_USER}"
-  ensure_php_pool_for_user "${SITE_USER}" "${PHP_VERSION}"
+  ensure_php_pool_for_user "${SITE_USER}" "${PHP_VERSION}" "${POOL_TIER}"
   create_database
   create_docroot
 

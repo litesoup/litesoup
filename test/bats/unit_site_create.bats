@@ -124,3 +124,54 @@ STUBS
   assert_output --partial "--tls="
   assert_output --partial "--email="
 }
+
+@test "site-create defaults to --tier=small" {
+  STUBS_FILE="${BATS_TEST_TMPDIR}/stubs.sh"
+  cat >"${STUBS_FILE}" <<'STUBS'
+require_root() { :; }
+ensure_user() { :; }
+ensure_php_pool_for_user() { echo "POOL: $*"; }
+create_database() { DB_NAME=db; DB_USER=u; DB_PASS=p; }
+create_docroot() { DOCROOT=/var/empty; }
+write_vhost() { :; }
+download_wordpress() { :; }
+certbot_obtain() { :; }
+certbot_self_signed() { :; }
+STUBS
+  run -0 env LITESOUP_ALLOW_TEST_STUBS=1 LITESOUP_TEST_STUBS="${STUBS_FILE}" DRY_RUN=1 \
+    bash "${REPO_ROOT}/site/site-create.sh" --domain=example.test
+  assert_output --partial "POOL: litesoup 8.2 small"
+}
+
+@test "site-create --tier=medium passes through to ensure_php_pool_for_user" {
+  STUBS_FILE="${BATS_TEST_TMPDIR}/stubs.sh"
+  cat >"${STUBS_FILE}" <<'STUBS'
+require_root() { :; }
+ensure_user() { :; }
+ensure_php_pool_for_user() { echo "POOL: $*"; }
+create_database() { DB_NAME=db; DB_USER=u; DB_PASS=p; }
+create_docroot() { DOCROOT=/var/empty; }
+write_vhost() { :; }
+download_wordpress() { :; }
+certbot_obtain() { :; }
+certbot_self_signed() { :; }
+STUBS
+  run -0 env LITESOUP_ALLOW_TEST_STUBS=1 LITESOUP_TEST_STUBS="${STUBS_FILE}" DRY_RUN=1 \
+    bash "${REPO_ROOT}/site/site-create.sh" --domain=example.test --tier=medium
+  assert_output --partial "POOL: litesoup 8.2 medium"
+}
+
+@test "site-create --tier=garbage rejected" {
+  STUBS_FILE="${BATS_TEST_TMPDIR}/stubs.sh"
+  cat >"${STUBS_FILE}" <<'STUBS'
+require_root() { :; }
+STUBS
+  run -64 env LITESOUP_ALLOW_TEST_STUBS=1 LITESOUP_TEST_STUBS="${STUBS_FILE}" DRY_RUN=1 \
+    bash "${REPO_ROOT}/site/site-create.sh" --domain=example.test --tier=garbage
+  assert_output --partial "--tier must be one of: small, medium, large"
+}
+
+@test "site-create help mentions --tier" {
+  run -0 bash "${REPO_ROOT}/site/site-create.sh" --help
+  assert_output --partial "--tier="
+}

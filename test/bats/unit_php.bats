@@ -83,3 +83,82 @@ setup() {
   DRY_RUN=1 run -0 ensure_php_82_pool_for_user alice
   assert_output --partial "alice-php8.2"
 }
+
+@test "SUPPORTED_POOL_TIERS contains small, medium, large" {
+  for t in small medium large; do
+    [[ " ${SUPPORTED_POOL_TIERS[*]} " == *" ${t} "* ]] \
+      || { echo "missing ${t} in SUPPORTED_POOL_TIERS"; return 1; }
+  done
+}
+
+@test "validate_pool_tier accepts supported tiers" {
+  run -0 validate_pool_tier "small"
+  run -0 validate_pool_tier "medium"
+  run -0 validate_pool_tier "large"
+}
+
+@test "validate_pool_tier rejects unsupported tiers" {
+  run -1 validate_pool_tier "huge"
+  run -1 validate_pool_tier "garbage"
+}
+
+@test "php_pool_tier_block small uses ondemand-only directives" {
+  run -0 php_pool_tier_block "small"
+  assert_output --partial "pm = ondemand"
+  assert_output --partial "pm.max_children = 5"
+  assert_output --partial "pm.max_requests = 500"
+  assert_output --partial "pm.process_idle_timeout = 30s"
+  # ondemand rejects start/spare-server tunables -- their presence makes
+  # `php-fpm --test` reject the rendered pool conf.
+  refute_output --partial "pm.start_servers"
+  refute_output --partial "pm.min_spare_servers"
+  refute_output --partial "pm.max_spare_servers"
+}
+
+@test "php_pool_tier_block medium uses dynamic with proper sizing" {
+  run -0 php_pool_tier_block "medium"
+  assert_output --partial "pm = dynamic"
+  assert_output --partial "pm.max_children = 20"
+  assert_output --partial "pm.start_servers = 4"
+  assert_output --partial "pm.min_spare_servers = 2"
+  assert_output --partial "pm.max_spare_servers = 8"
+  assert_output --partial "pm.max_requests = 1000"
+  # process_idle_timeout is ondemand-only; not meaningful under dynamic.
+  refute_output --partial "process_idle_timeout"
+}
+
+@test "php_pool_tier_block large uses dynamic with high sizing" {
+  run -0 php_pool_tier_block "large"
+  assert_output --partial "pm = dynamic"
+  assert_output --partial "pm.max_children = 50"
+  assert_output --partial "pm.start_servers = 10"
+  assert_output --partial "pm.min_spare_servers = 5"
+  assert_output --partial "pm.max_spare_servers = 20"
+  assert_output --partial "pm.max_requests = 2000"
+  refute_output --partial "process_idle_timeout"
+}
+
+@test "php_pool_tier_block rejects unsupported tier" {
+  run -1 php_pool_tier_block "huge"
+}
+
+@test "ensure_php_pool_for_user accepts optional tier arg, default small" {
+  ensure_user() { :; }; export -f ensure_user
+  log_info() { echo "INFO: $*"; }; export -f log_info
+
+  DRY_RUN=1 run -0 ensure_php_pool_for_user alice "8.3"
+  assert_output --partial "tier=small"
+}
+
+@test "ensure_php_pool_for_user with tier=medium logs tier=medium" {
+  ensure_user() { :; }; export -f ensure_user
+  log_info() { echo "INFO: $*"; }; export -f log_info
+
+  DRY_RUN=1 run -0 ensure_php_pool_for_user alice "8.3" "medium"
+  assert_output --partial "tier=medium"
+}
+
+@test "ensure_php_pool_for_user rejects unsupported tier" {
+  ensure_user() { :; }; export -f ensure_user
+  run -1 ensure_php_pool_for_user alice "8.3" "huge"
+}
