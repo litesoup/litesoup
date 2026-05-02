@@ -34,3 +34,28 @@ setup() {
   [ "$(php_fpm_socket_for_user alice 8.3)" = "/run/php/alice-php8.3-fpm.sock" ]
   [ "$(php_fpm_socket_for_user bob 8.0)"   = "/run/php/bob-php8.0-fpm.sock" ]
 }
+
+@test "ensure_php_fpm rejects unsupported version" {
+  run -1 ensure_php_fpm "7.4"
+}
+
+@test "ensure_php_fpm dry-run installs version-specific packages" {
+  ensure_ppa() { :; }
+  ensure_pkgs() { local p; for p in "$@"; do echo "PKGS: $p"; done; }
+  run_or_dryrun() { echo "RUN: $*"; }
+  export -f ensure_ppa ensure_pkgs run_or_dryrun
+  DRY_RUN=1 run -0 ensure_php_fpm "8.3"
+  assert_output --partial "PKGS: php8.3-fpm"
+  assert_output --partial "PKGS: php8.3-cli"
+  assert_output --partial "RUN: systemctl enable --now php8.3-fpm"
+  refute_output --partial "php8.2-fpm"
+}
+
+@test "ensure_php_82_fpm shim still works (deprecated)" {
+  ensure_ppa() { :; }
+  ensure_pkgs() { local p; for p in "$@"; do echo "PKGS: $p"; done; }
+  run_or_dryrun() { echo "RUN: $*"; }
+  export -f ensure_ppa ensure_pkgs run_or_dryrun
+  DRY_RUN=1 run -0 ensure_php_82_fpm
+  assert_output --partial "PKGS: php8.2-fpm"
+}

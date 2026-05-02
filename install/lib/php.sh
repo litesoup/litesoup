@@ -35,32 +35,41 @@ _php_repo_root() {
   ( cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd )
 }
 
-ensure_php_82_fpm() {
+# ensure_php_fpm VERSION -- install PHP <VERSION> + extensions + FPM via Ondrej PPA,
+# then disable the default www.conf pool so every site must run via a per-user
+# pool. Idempotent.
+ensure_php_fpm() {
+  local v="${1:?ensure_php_fpm: version required}"
+  validate_php_version "${v}" \
+    || { log_error "php: unsupported version ${v} (allowed: ${SUPPORTED_PHP_VERSIONS[*]})"; return 1; }
+
   ensure_ppa "ppa:ondrej/php" "/etc/apt/sources.list.d/ondrej-ubuntu-php-noble.sources"
 
-  local pkgs=()
-  local ext
+  local pkgs=() ext
   for ext in "${PHP_EXTENSIONS[@]}"; do
-    pkgs+=("php${PHP_VERSION_DEFAULT}-${ext}")
+    pkgs+=("php${v}-${ext}")
   done
   ensure_pkgs "${pkgs[@]}"
 
-  # CLI default -> 8.2
-  if command -v update-alternatives >/dev/null 2>&1; then
-    run_or_dryrun update-alternatives --set php "/usr/bin/php${PHP_VERSION_DEFAULT}"
+  # Default `php` CLI -> PHP_VERSION_DEFAULT (only set when installing it).
+  if [ "${v}" = "${PHP_VERSION_DEFAULT}" ] && command -v update-alternatives >/dev/null 2>&1; then
+    run_or_dryrun update-alternatives --set php "/usr/bin/php${v}"
   fi
 
-  # Start FPM with its default www.conf pool first, then immediately disable
-  # the default pool -- every site must run as its owner via a per-user pool.
-  # Renaming (rather than deleting) preserves the upstream copy for reference
-  # and lets re-runs detect "already disabled".
-  run_or_dryrun systemctl enable --now "php${PHP_VERSION_DEFAULT}-fpm"
+  # Start FPM with its default www.conf pool first, then disable that pool.
+  run_or_dryrun systemctl enable --now "php${v}-fpm"
 
-  local default_pool="/etc/php/${PHP_VERSION_DEFAULT}/fpm/pool.d/www.conf"
+  local default_pool="/etc/php/${v}/fpm/pool.d/www.conf"
   if [ -f "${default_pool}" ]; then
     run_or_dryrun mv "${default_pool}" "${default_pool}.disabled"
-    run_or_dryrun systemctl reload "php${PHP_VERSION_DEFAULT}-fpm"
+    run_or_dryrun systemctl reload "php${v}-fpm"
   fi
+}
+
+# DEPRECATED -- kept as a back-compat shim for v0.1.0 callers. Removed in v0.3.0.
+ensure_php_82_fpm() {
+  log_warn "ensure_php_82_fpm is deprecated; use ensure_php_fpm 8.2"
+  ensure_php_fpm "8.2"
 }
 
 # Per-user FPM socket path. Pool key = <user>-php<version>.
