@@ -129,9 +129,15 @@ write_vhost() {
     log_info "[DRYRUN] would render vhost ${vhost} (socket=${socket})"
     return 0
   fi
+  # __HTTP_REDIRECT__ and __HTTPS_BLOCK__ are TLS-mode placeholders introduced
+  # in Plan I.D. Until Task 6 wires up per-site TLS, this script is HTTP-only
+  # and renders both placeholders to empty strings so the template stays
+  # back-compat. Task 6 replaces this whole render with site/_vhost_render.sh.
   sed -e "s|__DOMAIN__|${DOMAIN}|g" \
       -e "s|__DOCROOT__|${DOCROOT}|g" \
       -e "s|__FPM_SOCKET__|${socket}|g" \
+      -e "s|__HTTP_REDIRECT__||g" \
+      -e "s|__HTTPS_BLOCK__||g" \
       "${REPO_ROOT}/templates/apache/vhost.conf.tmpl" >"${vhost}"
   a2ensite "${DOMAIN}.conf" >/dev/null
   systemctl reload apache2
