@@ -147,8 +147,11 @@ php_fpm_socket_for_user() {
 ensure_php_pool_for_user() {
   local user="${1:?user required}"
   local v="${2:?version required}"
+  local tier="${3:-small}"
   validate_php_version "${v}" \
     || { log_error "php: unsupported version ${v}"; return 1; }
+  validate_pool_tier "${tier}" \
+    || { log_error "php: unsupported tier ${tier}"; return 1; }
 
   if [ "${DRY_RUN}" != "1" ] && [ ! -d "/etc/php/${v}/fpm/pool.d" ]; then
     log_error "php: php${v}-fpm is not installed (run install-stack with --php-versions including ${v})"
@@ -164,7 +167,7 @@ ensure_php_pool_for_user() {
 
   ensure_user "${user}"
 
-  # Pre-create per-user PHP runtime dirs (open_basedir will reject writes outside)
+  # Pre-create per-user PHP runtime dirs
   if [ "${DRY_RUN}" = "1" ]; then
     log_info "[DRYRUN] would ensure /home/${user}/{.php_tmp,.php_sessions,.logs}"
   else
@@ -176,37 +179,71 @@ ensure_php_pool_for_user() {
     done
   fi
 
+  # Detect same-tier re-run as no-op; otherwise re-render.
   if [ -f "${conf}" ]; then
-    log_info "php: pool ${pool} already configured"
+    local current_tier
+    current_tier="$(_php_pool_current_tier "${conf}")"
+    if [ "${current_tier}" = "${tier}" ]; then
+      log_info "php: pool ${pool} already configured (tier=${tier})"
+      return 0
+    fi
+    log_info "php: pool ${pool} retuning tier ${current_tier} -> ${tier}"
+  else
+    log_info "php: creating pool ${pool} (socket ${socket}, tier=${tier})"
+  fi
+
+  if [ "${DRY_RUN}" = "1" ]; then
+    log_info "[DRYRUN] would render ${conf} from templates/php/pool.conf.tmpl (tier=${tier})"
     return 0
   fi
 
-  log_info "php: creating pool ${pool} (socket ${socket})"
-  if [ "${DRY_RUN}" = "1" ]; then
-    log_info "[DRYRUN] would render ${conf} from templates/php/pool.conf.tmpl"
-  else
-    sed -e "s|__POOL_NAME__|${pool}|g" \
-        -e "s|__USER__|${user}|g" \
-        -e "s|__SOCKET__|${socket}|g" \
-        -e "s|__PHP_VERSION__|${v}|g" \
-        "${repo_root}/templates/php/pool.conf.tmpl" >"${conf}"
-  fi
+  local tier_block
+  tier_block="$(php_pool_tier_block "${tier}")"
 
-  if [ "${DRY_RUN}" != "1" ]; then
-    # Capture --test stderr so the operator sees the actual syntax error
-    # (line number, bad directive) instead of just a generic failure message.
-    local fpm_test_err
-    fpm_test_err="$(mktemp)"
-    if ! "/usr/sbin/php-fpm${v}" --test 2>"${fpm_test_err}"; then
-      log_error "php: pool config test failed for php${v}-fpm"
-      cat "${fpm_test_err}" >&2
-      rm -f "${fpm_test_err}"
-      return 1
-    fi
+  # python3 for the multi-line __TIER_BLOCK__ substitution (sed with newlines
+  # in the replacement is portability-fragile; python3 is in the baseline via
+  # python3-certbot-apache from Plan I.D's install-stack stage 6).
+  python3 -c "
+tmpl = open('${repo_root}/templates/php/pool.conf.tmpl').read()
+out = (tmpl
+  .replace('__POOL_NAME__',   '''${pool}''')
+  .replace('__USER__',        '''${user}''')
+  .replace('__SOCKET__',      '''${socket}''')
+  .replace('__PHP_VERSION__', '''${v}''')
+  .replace('__TIER_BLOCK__',  '''${tier_block}''')
+)
+open('${conf}', 'w').write(out)
+"
+
+  # Capture --test stderr so the operator sees actual syntax errors instead
+  # of a generic failure (same defense as I.D's adversarial-fix on certbot).
+  local fpm_test_err
+  fpm_test_err="$(mktemp)"
+  if ! "/usr/sbin/php-fpm${v}" --test 2>"${fpm_test_err}"; then
+    log_error "php: pool config test failed for php${v}-fpm"
+    cat "${fpm_test_err}" >&2
     rm -f "${fpm_test_err}"
+    return 1
   fi
+  rm -f "${fpm_test_err}"
+
   run_or_dryrun systemctl reload "php${v}-fpm" \
     || run_or_dryrun systemctl restart "php${v}-fpm"
+}
+
+# _php_pool_current_tier CONF_PATH -- inspect a rendered pool conf and echo
+# the tier name (small|medium|large) based on its pm.max_children value.
+# Returns "unknown" for hand-edited or pre-tier pools.
+_php_pool_current_tier() {
+  local conf="${1:?conf path required}"
+  local mc
+  mc="$(grep -E '^pm\.max_children\s*=' "${conf}" 2>/dev/null | head -1 | awk -F'=' '{gsub(/ /,"",$2); print $2}')"
+  case "${mc}" in
+    5)  echo "small" ;;
+    20) echo "medium" ;;
+    50) echo "large" ;;
+    *)  echo "unknown" ;;
+  esac
 }
 
 # DEPRECATED -- kept as a back-compat shim for v0.1.0 callers. Removed in v0.3.0.

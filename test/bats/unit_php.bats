@@ -126,3 +126,24 @@ setup() {
 @test "php_pool_tier_block rejects unsupported tier" {
   run -1 php_pool_tier_block "huge"
 }
+
+@test "ensure_php_pool_for_user accepts optional tier arg, default small" {
+  ensure_user() { :; }; export -f ensure_user
+  log_info() { echo "INFO: $*"; }; export -f log_info
+
+  DRY_RUN=1 run -0 ensure_php_pool_for_user alice "8.3"
+  assert_output --partial "tier=small"
+}
+
+@test "ensure_php_pool_for_user with tier=medium logs tier=medium" {
+  ensure_user() { :; }; export -f ensure_user
+  log_info() { echo "INFO: $*"; }; export -f log_info
+
+  DRY_RUN=1 run -0 ensure_php_pool_for_user alice "8.3" "medium"
+  assert_output --partial "tier=medium"
+}
+
+@test "ensure_php_pool_for_user rejects unsupported tier" {
+  ensure_user() { :; }; export -f ensure_user
+  run -1 ensure_php_pool_for_user alice "8.3" "huge"
+}
