@@ -172,7 +172,13 @@ ensure_php_fpm() {
       mv "${pool_file}" "${pool_file}.disabled"
       disabled_any=1
     done < <(find "${pool_dir}" -maxdepth 1 -type f -name '*.conf' -print0 2>/dev/null)
-    [ "${disabled_any}" = "1" ] && run_or_dryrun systemctl reload "php${v}-fpm"
+    # `[ x = y ] && cmd` as the function's LAST statement is a set -e
+    # footgun: when the test is false (nothing needed disabling on a
+    # re-run), the && short-circuits and the function returns 1, which
+    # trips set -e in the caller. Use explicit if/fi instead.
+    if [ "${disabled_any}" = "1" ]; then
+      run_or_dryrun systemctl reload "php${v}-fpm"
+    fi
   fi
 }
 
