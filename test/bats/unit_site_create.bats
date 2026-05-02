@@ -175,3 +175,66 @@ STUBS
   run -0 bash "${REPO_ROOT}/site/site-create.sh" --help
   assert_output --partial "--tier="
 }
+
+@test "create_database emits ALTER USER for idempotent password reset" {
+  source "${REPO_ROOT}/install/lib/common.sh"
+  source "${REPO_ROOT}/install/lib/users.sh"
+  source "${REPO_ROOT}/install/lib/php.sh"
+  source "${REPO_ROOT}/install/lib/mariadb.sh"
+  source "${REPO_ROOT}/site/_vhost_render.sh"
+
+  # Stub mariadb_root to capture the SQL piped to it.
+  mariadb_root() { cat > "${BATS_TEST_TMPDIR}/sql.captured"; }
+
+  # Source site-create.sh's body without running main(); pull the function in.
+  # site-create.sh runs `main "$@"` at the bottom -- we don't want that here,
+  # so we source via a subshell trick: feed an exit before main.
+  DOMAIN="example.test"
+  SITE_USER="litesoup"
+  DRY_RUN=0
+  unset DB_NAME DB_USER DB_PASS
+
+  # Pull just the create_database function definition out of site-create.sh.
+  eval "$(awk '/^create_database\(\) \{/,/^\}/' "${REPO_ROOT}/site/site-create.sh")"
+  eval "$(awk '/^db_ident_for\(\) \{/,/^\}/' "${REPO_ROOT}/site/site-create.sh")"
+
+  create_database
+
+  SQL="$(cat "${BATS_TEST_TMPDIR}/sql.captured")"
+  [[ "${SQL}" == *"CREATE USER IF NOT EXISTS"* ]] || { echo "missing CREATE USER: ${SQL}"; return 1; }
+  [[ "${SQL}" == *"ALTER  USER"* ]] || [[ "${SQL}" == *"ALTER USER"* ]] || { echo "missing ALTER USER: ${SQL}"; return 1; }
+  [[ "${SQL}" == *"GRANT ALL PRIVILEGES"* ]] || { echo "missing GRANT: ${SQL}"; return 1; }
+  # CREATE and ALTER must use the SAME password (avoid the v0.1 drift bug).
+  CREATE_PW="$(echo "${SQL}" | grep CREATE | grep -oE "IDENTIFIED BY '[^']+'" | head -1)"
+  ALTER_PW="$(echo  "${SQL}" | grep ALTER  | grep -oE "IDENTIFIED BY '[^']+'" | head -1)"
+  [ "${CREATE_PW}" = "${ALTER_PW}" ] || { echo "CREATE/ALTER pw mismatch: ${CREATE_PW} vs ${ALTER_PW}"; return 1; }
+}
+
+@test "create_database reuses existing wp-config password (heals half-install)" {
+  source "${REPO_ROOT}/install/lib/common.sh"
+  source "${REPO_ROOT}/install/lib/users.sh"
+  source "${REPO_ROOT}/install/lib/php.sh"
+  source "${REPO_ROOT}/install/lib/mariadb.sh"
+  source "${REPO_ROOT}/site/_vhost_render.sh"
+
+  mariadb_root() { cat > "${BATS_TEST_TMPDIR}/sql.captured"; }
+
+  DOMAIN="example.test"
+  SITE_USER="litesoup"
+  DRY_RUN=0
+
+  # Plant a wp-config.php with a known DB_PASSWORD that create_database should reuse.
+  KNOWN_PW="ZeroOneTwoThreeFourFive99"
+  WPCFG_DIR="/home/${SITE_USER}/webapps/${DOMAIN}"
+  # We can't write to /home/... in tests, so test the password parser directly.
+  TMPCFG="${BATS_TEST_TMPDIR}/wp-config.php"
+  cat >"${TMPCFG}" <<PHP
+<?php
+define( 'DB_NAME',     'wp_example_test' );
+define( 'DB_USER',     'wp_example_test' );
+define( 'DB_PASSWORD', '${KNOWN_PW}' );
+define( 'DB_HOST',     'localhost' );
+PHP
+  PARSED="$(awk -F"'" '/define\([[:space:]]*.DB_PASSWORD./{print $4; exit}' "${TMPCFG}")"
+  [ "${PARSED}" = "${KNOWN_PW}" ] || { echo "parser wrong: got '${PARSED}', wanted '${KNOWN_PW}'"; return 1; }
+}
