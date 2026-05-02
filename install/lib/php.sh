@@ -114,9 +114,10 @@ _php_repo_root() {
   ( cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd )
 }
 
-# ensure_php_fpm VERSION -- install PHP <VERSION> + extensions + FPM via Ondrej PPA,
-# then disable the default www.conf pool so every site must run via a per-user
-# pool. Idempotent.
+# ensure_php_fpm VERSION -- install PHP <VERSION> + extensions + FPM via Ondrej PPA
+# (with cloudpanel.io mirror fallback, see install/lib/apt.sh), then disable any
+# vendor-shipped default pool so every site must run via a per-user pool.
+# Idempotent.
 ensure_php_fpm() {
   local v="${1:?ensure_php_fpm: version required}"
   validate_php_version "${v}" \
@@ -141,13 +142,37 @@ ensure_php_fpm() {
     run_or_dryrun update-alternatives --set php "/usr/bin/php${v}"
   fi
 
-  # Start FPM with its default www.conf pool first, then disable that pool.
+  # Start FPM with its default pool first, then disable any vendor-shipped
+  # pool that isn't ours so every site runs via a per-user pool.
   run_or_dryrun systemctl enable --now "php${v}-fpm"
 
-  local default_pool="/etc/php/${v}/fpm/pool.d/www.conf"
-  if [ -f "${default_pool}" ]; then
-    run_or_dryrun mv "${default_pool}" "${default_pool}.disabled"
-    run_or_dryrun systemctl reload "php${v}-fpm"
+  # Different upstreams ship different default pool filenames:
+  #   - Ubuntu php-fpm packages: /etc/php/X.Y/fpm/pool.d/www.conf
+  #     ([www] pool, runs as www-data on a unix socket)
+  #   - CloudPanel mirror (repackaged Sury): default.conf
+  #     ([default] pool, runs as www-data on TCP 127.0.0.1:17000 with
+  #     pm.max_children=250 -- same security/resource hole, just renamed)
+  # Disable any *.conf in pool.d/ that doesn't belong to litesoup, regardless
+  # of vendor naming. Files we manage are litesoup-php<version>.conf.
+  local pool_dir="/etc/php/${v}/fpm/pool.d"
+  local disabled_any=0
+  if [ "${DRY_RUN}" = "1" ]; then
+    log_info "[DRYRUN] would disable any non-litesoup *.conf in ${pool_dir}"
+  elif [ -d "${pool_dir}" ]; then
+    local pool_file
+    while IFS= read -r -d '' pool_file; do
+      local base="${pool_file##*/}"
+      case "${base}" in
+        litesoup-*) continue ;;          # ours, leave alone
+        global.conf)                     # CloudPanel ships this -- it's the
+          # [global] section, not a pool. Leave alone (master fpm needs it).
+          continue ;;
+      esac
+      log_info "php: disabling vendor-shipped pool ${pool_file}"
+      mv "${pool_file}" "${pool_file}.disabled"
+      disabled_any=1
+    done < <(find "${pool_dir}" -maxdepth 1 -type f -name '*.conf' -print0 2>/dev/null)
+    [ "${disabled_any}" = "1" ] && run_or_dryrun systemctl reload "php${v}-fpm"
   fi
 }
 

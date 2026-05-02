@@ -12,9 +12,26 @@ systemctl is-active --quiet apache2
 systemctl is-active --quiet php8.2-fpm
 systemctl is-active --quiet mariadb
 
-# Default Ubuntu pool is disabled
-[ ! -f /etc/php/8.2/fpm/pool.d/www.conf ]
-[ -f /etc/php/8.2/fpm/pool.d/www.conf.disabled ]
+# Default vendor pool is disabled. Assert the security property generically
+# (no non-litesoup *.conf left active) rather than the Ubuntu-specific
+# www.conf filename, since CloudPanel-mirror installs ship default.conf
+# instead -- same security hole, different filename. global.conf is the
+# [global] settings file (not a pool); leave it.
+shopt -s nullglob
+active_vendor_pools=()
+for f in /etc/php/8.2/fpm/pool.d/*.conf; do
+  base="${f##*/}"
+  case "${base}" in litesoup-*|global.conf) continue ;; esac
+  active_vendor_pools+=("${f}")
+done
+if [ "${#active_vendor_pools[@]}" -ne 0 ]; then
+  echo "FAIL: vendor pool(s) still active: ${active_vendor_pools[*]}" >&2
+  exit 1
+fi
+disabled_count=$(find /etc/php/8.2/fpm/pool.d -maxdepth 1 -type f -name '*.conf.disabled' | wc -l)
+[ "${disabled_count}" -ge 1 ] \
+  || { echo "FAIL: no .conf.disabled marker in pool.d/ (vendor pool was never disabled)" >&2; exit 1; }
+shopt -u nullglob
 
 # Default site user provisioned with correct home perms
 id litesoup >/dev/null
