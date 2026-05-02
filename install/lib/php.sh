@@ -9,6 +9,21 @@ LITESOUP_PHP_SH=1
 
 PHP_VERSION_DEFAULT="8.2"
 
+# All PHP versions this installer knows how to provision via Ondrej PPA.
+# Plan I.B scope; expand here when a new release lands.
+SUPPORTED_PHP_VERSIONS=(8.0 8.1 8.2 8.3 8.4 8.5)
+
+# validate_php_version VERSION -- exits 0 if VERSION is in SUPPORTED_PHP_VERSIONS,
+# 1 otherwise. Caller is responsible for any user-facing error message.
+validate_php_version() {
+  local v="${1:?validate_php_version: version required}"
+  local s
+  for s in "${SUPPORTED_PHP_VERSIONS[@]}"; do
+    [ "${s}" = "${v}" ] && return 0
+  done
+  return 1
+}
+
 PHP_EXTENSIONS=(
   fpm cli common opcache mysql mbstring xml curl gd zip intl bcmath soap imagick redis
 )
