@@ -6,6 +6,40 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-02
+
+Plan I.B: multi-version PHP. Builds directly on v0.1.0 — per-user pool naming was already pre-formatted as `<user>-php<version>` so on-disk layout, vhost template, and pool template are unchanged.
+
+### Added
+
+- `install-stack.sh --php-versions=X.Y[,X.Y…]` installs any subset of PHP `{8.0, 8.1, 8.2, 8.3, 8.4, 8.5}` side-by-side via the Ondrej PPA. Default if the flag is omitted: `8.2,8.3,8.4`. The default version (`PHP_VERSION_DEFAULT`, currently 8.2) must be in the install set.
+- `site-create.sh --php=X.Y` selects the PHP version per site (default `PHP_VERSION_DEFAULT`). Validated against installed versions.
+- `SUPPORTED_PHP_VERSIONS` array + `validate_php_version` helper in `install/lib/php.sh`.
+- `ensure_php_fpm <version>` and `ensure_php_pool_for_user <user> <version>` parameterized helpers.
+- New bats unit suites: `unit_php.bats` (11 tests), `unit_install_stack.bats` (5 tests), `unit_site_create.bats` (4 tests). Total bats coverage: 38 tests.
+- `LITESOUP_TEST_STUBS` env hook in `site-create.sh` so bats can replace functions that need real root / a real system.
+- Acceptance test `test/acceptance-i-b-run.sh` and reference log `test/acceptance-i-b.log` — two sites at PHP 8.2 + 8.4 on the same host, both serving the WordPress install screen, idempotency re-run.
+
+### Fixed
+
+- `ensure_ppa` falls back to manual PPA registration on **any** `add-apt-repository` failure (was previously only triggered on Launchpad 504/timeout). Caught during Plan I.B Docker acceptance: the container hit `OSError: [Errno 99] Cannot assign requested address` from `launchpadlib`'s IPv6 connect attempt, which the old grep didn't match — installer aborted instead of falling through to the working keyserver path. Now any failure tries the manual route if a key mapping exists.
+
+### Deprecated
+
+- `ensure_php_82_fpm` — use `ensure_php_fpm 8.2` instead. Kept as a back-compat shim with a `log_warn`. Removed in v0.3.0.
+- `ensure_php_82_pool_for_user` — use `ensure_php_pool_for_user <user> 8.2` instead. Same shim treatment. Removed in v0.3.0.
+
+### Unchanged
+
+- v0.1.0 callers (anyone sourcing `install/lib/php.sh` and calling the `_82` functions) continue to work via the shims.
+- `site-delete.sh`, vhost template, pool template — no changes required.
+
+### Known limitations (deferred)
+
+- Cannot change a live site's PHP version (no `site-set-php` yet) → Plan I.C.
+- All pools share the v0.1.0 default sizing (`pm.max_children=5`, `pm=ondemand`) → Plan I.C will introduce per-tier sizing.
+- Cannot remove an installed PHP version (no `install-stack --remove-php=X.Y` yet) → Plan I.D.
+
 ## [0.1.0] - 2026-05-01
 
 First public release. Implements [Plan I.A](https://github.com/codetot-web/litesoup/pull/2): a one-line bash installer that turns a fresh Ubuntu 24.04 host into a working WordPress server.
@@ -58,4 +92,5 @@ curl -H 'Host: example.test' http://127.0.0.1/wp-admin/install.php
 - **Plan I.C** — Redis + Memcached + per-site Apache FastCGI cache + Redis object cache auto-config
 - **Plan I.D** — `ufw`, `fail2ban`, `unattended-upgrades`, certbot/TLS, broader hardening, Sigstore-signed releases, distro detection beyond Ubuntu 24.04
 
+[0.2.0]: https://github.com/codetot-web/litesoup/releases/tag/v0.2.0
 [0.1.0]: https://github.com/codetot-web/litesoup/releases/tag/v0.1.0
