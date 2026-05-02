@@ -108,6 +108,9 @@ sudo bash site/site-create.sh --domain=beta.test --php=8.4
 - **PHP** (FPM + CLI) via the [Ondrej Surý PPA](https://launchpad.net/~ondrej/+archive/ubuntu/php), with the standard WordPress extension set (`opcache`, `mysql`, `mbstring`, `xml`, `curl`, `gd`, `zip`, `intl`, `bcmath`, `soap`, `imagick`, `redis`). Default install set: `8.2, 8.3, 8.4`. Other versions in `8.0–8.5` available via `--php-versions=`.
 - **MariaDB 10.x** with non-interactive secure baseline (random root password stored at `/root/.litesoup-mariadb-root` mode `0600`)
 - **wp-cli** (installed to `/usr/local/bin/wp`, sha512-verified)
+- **certbot** (Let's Encrypt) with auto-renewal via the `certbot.timer` systemd timer
+- **Redis 7.x** bound to `127.0.0.1` with `requirepass` set (random 32-char password persisted to `/etc/litesoup/redis.env` mode `0640 root:root`), `maxmemory` sized per RAM tier (small <2G→128mb, medium 2–8G→512mb, large ≥8G→2gb), `maxmemory-policy allkeys-lru`. Override with `--redis-maxmemory=SIZE`. See [`docs/caching.md`](docs/caching.md).
+- **Memcached** bound to `127.0.0.1` with UDP disabled (`-U 0`)
 - A system user **`litesoup`** (no shell, home `/home/litesoup` mode `0711`) and a **per-user PHP-FPM pool** at `/run/php/litesoup-php8.2-fpm.sock` running as the `litesoup` user with `open_basedir` confined to `/home/litesoup/webapps/`. The default Ubuntu `www-data` pool is **disabled** — every site runs under its owner UID, never as Apache.
 
 ### Hardening baked into the per-user pool
@@ -132,10 +135,23 @@ sudo bash site/site-create.sh --domain=beta.test --php=8.4
 
 To run a site under a different system user (e.g., per-client isolation), pass `--user=NAME` to `site-create.sh`. The user is created on demand and gets its own FPM pool at `/run/php/<user>-php8.2-fpm.sock`.
 
+## Caching
+
+Redis and Memcached are installed by `install-stack.sh`. `site-create.sh`
+injects per-site `WP_CACHE_KEY_SALT` (random, prevents cross-tenant Redis
+key collisions) plus `WP_REDIS_HOST/PORT/PASSWORD/DATABASE` into every
+new site's `wp-config.php`. Pick the WP cache plugin you want (Redis
+Object Cache for object cache; LiteSpeed Cache / W3TC / WP Rocket for
+page cache) — they read those constants and Just Work.
+
+litesoup does **not** ship a server-level page cache (Apache
+`mod_cache_disk` etc.). Server-level page cache layered on top of a
+plugin page cache produces stale-content bugs that are painful to
+diagnose. Full details and recommended plugins: [`docs/caching.md`](docs/caching.md).
+
 ## What's deferred to later sub-plans
 
 - **Plan I.E** — `install-stack --remove-php=X.Y`, `ufw`, `fail2ban`, `unattended-upgrades`, OCSP stapling, broader hardening, distro-detection beyond Ubuntu 24.04, and Sigstore-signed releases
-- **Plan I.F** — Redis + Memcached + per-site Apache FastCGI cache + Redis object cache auto-config (split out of original I.C since caching is its own subsystem)
 - **Plan H** — bash-scripts reorganization into `audit/`, `harden/`, `tune/` directories
 - **Plans A / J / E** — VPS migration, two-tier dashboard, client tenant portal
 

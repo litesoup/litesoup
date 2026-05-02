@@ -6,6 +6,105 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-02
+
+Plan I.F: caching infrastructure (Redis + Memcached) plus per-site
+`WP_CACHE_KEY_SALT` injection. Closes codetot-web/litesoup#12.
+
+This release ships **caching infrastructure**, not WordPress-side
+caching configuration — that's a deliberate split. The stack now
+installs Redis and Memcached with hardened defaults, and
+`site-create.sh` wires every new site's `wp-config.php` so that any
+cache plugin the user installs (Redis Object Cache, LiteSpeed Cache,
+WP Rocket, etc.) Just Works. We do not auto-install WP plugins or ship
+a server-level page cache (Apache `mod_cache_disk` etc.) because
+server-level + plugin-level page caching produces stale-content bugs
+that are painful to debug at scale. See [`docs/caching.md`](docs/caching.md)
+for the full rationale and recommended plugin list.
+
+### Added
+
+- `install/lib/redis.sh` — `ensure_redis()` installs `redis-server`,
+  generates a 32-char random password persisted to
+  `/etc/litesoup/redis.env` (`0640 root:root`), and writes a managed
+  override at `/etc/redis/litesoup.conf` with `bind 127.0.0.1 -::1`,
+  `protected-mode yes`, `requirepass`, RAM-tier-sized `maxmemory`
+  (small <2G→`128mb`, medium 2–8G→`512mb`, large ≥8G→`2gb`), and
+  `maxmemory-policy allkeys-lru`. Smoke-tested via `AUTH+PING` after
+  `systemctl restart`. Override the auto-tier with the new
+  `--redis-maxmemory=SIZE` flag on `install-stack.sh`.
+- `install/lib/memcached.sh` — `ensure_memcached()` installs
+  `memcached` and appends a litesoup-managed block to
+  `/etc/memcached.conf` enforcing `-l 127.0.0.1` and `-U 0` (UDP off,
+  removing the historic amplification-attack vector). Block is
+  idempotent — verified converged after 3 successive re-runs.
+- `site/site-create.sh` — `download_wordpress()` now calls
+  `inject_cache_constants()` after `wp config create`. Each constant
+  is set via `wp config set --add` only if `wp config has` returns
+  false, so re-runs against an existing site never rotate
+  `WP_CACHE_KEY_SALT` (would invalidate live caches) or change Redis
+  settings. Constants written: `WP_CACHE_KEY_SALT` (random 64-char
+  hex per site — prevents cross-tenant Redis key collisions),
+  `WP_REDIS_HOST=127.0.0.1`, `WP_REDIS_PORT=6379`, `WP_REDIS_PASSWORD`
+  (read by root from `/etc/litesoup/redis.env` then passed to wp-cli
+  via argv, matching existing `DB_PASS` handling), `WP_REDIS_DATABASE=0`.
+  Gracefully degrades with a `log_warn` if `redis.env` is missing.
+- `install/install-stack.sh` — sources the two new libs; adds stages
+  7/8 (redis) and 8/8 (memcached); bumps existing 1/6..6/6 stage
+  labels to /8; new `--redis-maxmemory=SIZE` flag with shape validation
+  (e.g. `256mb`, `1gb`, raw bytes).
+- `docs/caching.md` — what's installed and where, the per-site salt
+  rationale and multi-tenant warning, recommended object/page cache
+  plugins (Redis Object Cache + LiteSpeed/WP Rocket/W3TC), the
+  Memcached caveat, verification snippets, and a migration one-liner
+  for sites created before v0.5.0.
+- `test/integration/01_install_stack.sh` — extends to assert
+  redis-server + memcached active, password file shape/perms, override
+  config contents, loopback-only binding (no external listeners),
+  AUTH+PING, memcached UDP off, and re-run idempotency (password not
+  rotated, configs unchanged, include directive count == 1, override
+  flag flows through).
+- `test/integration/02_site_create.sh` — extends to assert
+  `WP_CACHE_KEY_SALT` shape (64-char hex), all four `WP_REDIS_*`
+  constants present and matching the env file, two sites get distinct
+  salts, and a `site-create.sh` re-run does NOT rotate the salt.
+- `test/acceptance-i-f-run.sh` + `test/acceptance-i-f.md` — full local
+  container acceptance harness plus the real-Ubuntu run procedure
+  (`sg10.codetot.org`) required per
+  `memory/project_real_acceptance_findings.md`.
+
+### Changed
+
+- `README.md` — install description lists `certbot`, `redis-server`,
+  `memcached` (was missing); new "Caching" section pointing at
+  `docs/caching.md`; removed the "Plan I.F future work" line item
+  (now done).
+- `install-stack.sh` `usage()` text documents `--redis-maxmemory` and
+  the new install items.
+
+### Out of scope (by design)
+
+- No Apache `mod_cache_disk` / FastCGI page cache. Server-level page
+  cache layered on top of a plugin page cache produces stale-content
+  bugs that are hard to diagnose at scale.
+- No auto-install of `redis-object-cache` or any other WP plugin. The
+  user picks their plugin; the stack makes sure it works.
+- No `site-set-cache` / `site-cache-purge` scripts. Cache invalidation
+  belongs in WordPress (where the plugin has access to `save_post`,
+  `comment_post`, theme/plugin update hooks).
+- No automatic `WP_CACHE_KEY_SALT` rotation for existing sites — a
+  documented manual one-liner is in `docs/caching.md`.
+
+### Migration
+
+Sites created with litesoup < 0.5.0 lack the new constants. Run the
+per-site one-liner in `docs/caching.md` ("Migrating sites created
+before v0.5.0") to add them. Existing Redis / Memcached configurations
+on a host (e.g. installed by hand or by a previous version) are not
+overwritten — `ensure_redis` only writes the managed include if its
+content differs, and `ensure_memcached` only edits the managed block
+between its BEGIN/END markers.
+
 ## [0.4.1] - 2026-05-02
 
 Bugfix release. Two issues caught by the v0.4.0 acceptance run on real Ubuntu (`sg10.codetot.org`).

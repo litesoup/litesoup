@@ -23,6 +23,8 @@ source "${REPO_ROOT}/install/lib/php.sh"
 source "${REPO_ROOT}/install/lib/mariadb.sh"
 # shellcheck source=../install/lib/certbot.sh
 source "${REPO_ROOT}/install/lib/certbot.sh"
+# shellcheck source=../install/lib/redis.sh
+source "${REPO_ROOT}/install/lib/redis.sh"
 # shellcheck source=./_vhost_render.sh
 source "${REPO_ROOT}/site/_vhost_render.sh"
 
@@ -189,12 +191,64 @@ create_docroot() {
 download_wordpress() {
   if [ "${DRY_RUN}" = "1" ]; then
     log_info "[DRYRUN] would wp core download into ${DOCROOT} as ${SITE_USER}"
+    log_info "[DRYRUN] would inject WP_CACHE_KEY_SALT + WP_REDIS_* constants"
     return 0
   fi
   sudo -H -u "${SITE_USER}" wp --path="${DOCROOT}" core download --skip-content
   sudo -H -u "${SITE_USER}" wp --path="${DOCROOT}" config create \
     --dbname="${DB_NAME}" --dbuser="${DB_USER}" --dbpass="${DB_PASS}" \
     --dbhost="localhost" --dbprefix="wp_" --skip-check
+  inject_cache_constants
+}
+
+# Idempotently set a single wp-config constant only if not already defined.
+# Skips silently if the constant already exists -- a re-run of site-create.sh
+# against an existing site must not rotate the salt or change Redis settings,
+# which would invalidate live caches.
+_wp_set_constant_if_unset() {
+  local key="$1" value="$2"
+  if sudo -H -u "${SITE_USER}" wp --path="${DOCROOT}" config has \
+       "${key}" --type=constant >/dev/null 2>&1; then
+    return 0
+  fi
+  sudo -H -u "${SITE_USER}" wp --path="${DOCROOT}" config set \
+    "${key}" "${value}" --type=constant --add >/dev/null
+}
+
+# Inject cache-related constants into wp-config.php:
+#   WP_CACHE_KEY_SALT  -- random per site; prevents cross-tenant Redis key
+#                         collisions when multiple sites share one Redis.
+#   WP_REDIS_HOST/PORT/PASSWORD/DATABASE -- so plugins like Redis Object Cache
+#                         work the moment the user runs `wp plugin install
+#                         redis-cache --activate && wp redis enable`.
+# Redis password is read from /etc/litesoup/redis.env as root (the env file is
+# 0640 root:root; SITE_USER cannot read it directly). The password is then
+# passed to wp-cli via argv. This matches how DB_PASS is already passed at
+# `wp config create` above.
+inject_cache_constants() {
+  local salt
+  salt="$(tr -dc 'a-f0-9' </dev/urandom | head -c 64 || true)"
+  _wp_set_constant_if_unset WP_CACHE_KEY_SALT "${salt}"
+
+  if [ ! -r "${REDIS_ENV_FILE}" ]; then
+    log_warn "site-create: ${REDIS_ENV_FILE} not found -- skipping WP_REDIS_* injection"
+    log_warn "site-create: run install-stack.sh to install Redis, then re-run site-create or set WP_REDIS_* manually"
+    return 0
+  fi
+  local redis_password
+  # shellcheck disable=SC1090
+  redis_password="$(. "${REDIS_ENV_FILE}" && printf '%s' "${REDIS_PASSWORD:-}")"
+  if [ -z "${redis_password}" ]; then
+    log_warn "site-create: ${REDIS_ENV_FILE} has empty REDIS_PASSWORD -- skipping WP_REDIS_* injection"
+    return 0
+  fi
+
+  _wp_set_constant_if_unset WP_REDIS_HOST     "127.0.0.1"
+  _wp_set_constant_if_unset WP_REDIS_PORT     "6379"
+  _wp_set_constant_if_unset WP_REDIS_PASSWORD "${redis_password}"
+  _wp_set_constant_if_unset WP_REDIS_DATABASE "0"
+
+  log_info "site-create: injected WP_CACHE_KEY_SALT + WP_REDIS_* into wp-config.php"
 }
 
 main() {

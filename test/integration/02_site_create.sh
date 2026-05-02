@@ -29,10 +29,38 @@ db=$(mysql --defaults-file=/root/.litesoup-mariadb-root -Nse \
 # PHP-FPM socket the vhost points to actually exists and is owned correctly
 [ -S /run/php/litesoup-php8.2-fpm.sock ]
 
+# --- Plan I.F: WP_CACHE_KEY_SALT + WP_REDIS_* injection ---
+
+WP1=/home/litesoup/webapps/example.test
+salt1="$(sudo -H -u litesoup wp --path="${WP1}" config get WP_CACHE_KEY_SALT --type=constant)"
+[[ "${salt1}" =~ ^[0-9a-f]{64}$ ]] || { echo "FAIL: WP_CACHE_KEY_SALT bad shape: ${salt1}" >&2; exit 1; }
+
+# WP_REDIS_* constants present and match what install-stack wrote
+[ "$(sudo -H -u litesoup wp --path="${WP1}" config get WP_REDIS_HOST     --type=constant)" = "127.0.0.1" ]
+[ "$(sudo -H -u litesoup wp --path="${WP1}" config get WP_REDIS_PORT     --type=constant)" = "6379" ]
+[ "$(sudo -H -u litesoup wp --path="${WP1}" config get WP_REDIS_DATABASE --type=constant)" = "0" ]
+WP_REDIS_PW="$(sudo -H -u litesoup wp --path="${WP1}" config get WP_REDIS_PASSWORD --type=constant)"
+ENV_REDIS_PW="$(. /etc/litesoup/redis.env && printf '%s' "${REDIS_PASSWORD}")"
+[ "${WP_REDIS_PW}" = "${ENV_REDIS_PW}" ] \
+  || { echo "FAIL: WP_REDIS_PASSWORD does not match /etc/litesoup/redis.env" >&2; exit 1; }
+
+# Second site: salt must differ
+grep -q 'second.test' /etc/hosts || echo '127.0.0.1 second.test' >>/etc/hosts
+bash site/site-create.sh --domain=second.test
+WP2=/home/litesoup/webapps/second.test
+salt2="$(sudo -H -u litesoup wp --path="${WP2}" config get WP_CACHE_KEY_SALT --type=constant)"
+[[ "${salt2}" =~ ^[0-9a-f]{64}$ ]] || { echo "FAIL: second salt bad shape: ${salt2}" >&2; exit 1; }
+[ "${salt1}" != "${salt2}" ] || { echo "FAIL: two sites got the same WP_CACHE_KEY_SALT" >&2; exit 1; }
+
 # Re-run for idempotency (CREATE DATABASE IF NOT EXISTS + CREATE USER IF NOT EXISTS
 # + ensure_user/ensure_pool no-ops; wp config create will fail on existing
 # wp-config.php which is the desired guard. The `|| true` allows the script
 # to exit non-zero on the WP step without failing the test.)
 bash site/site-create.sh --domain=example.test || true
+
+# Salt must NOT have rotated on re-run -- live caches would be invalidated.
+salt1_after="$(sudo -H -u litesoup wp --path="${WP1}" config get WP_CACHE_KEY_SALT --type=constant)"
+[ "${salt1}" = "${salt1_after}" ] \
+  || { echo "FAIL: WP_CACHE_KEY_SALT rotated on site-create.sh re-run" >&2; exit 1; }
 
 echo "02_site_create: PASS"
