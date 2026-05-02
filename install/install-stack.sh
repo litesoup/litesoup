@@ -24,6 +24,8 @@ source "${LIB_DIR}/php.sh"
 source "${LIB_DIR}/mariadb.sh"
 # shellcheck source=lib/wp_cli.sh
 source "${LIB_DIR}/wp_cli.sh"
+# shellcheck source=lib/certbot.sh
+source "${LIB_DIR}/certbot.sh"
 
 usage() {
   cat <<'EOF'
@@ -37,10 +39,13 @@ Options:
   --dry-run                   Print actions without executing
   --help                      Show this help
 
-Installs: Apache (mpm_event), one PHP-FPM pool per requested version
-          (Ondrej PPA, per-user pools), MariaDB, wp-cli. Provisions the
-          default site owner `litesoup` at /home/litesoup/webapps/ with
-          a per-user pool at PHP_VERSION_DEFAULT (8.2).
+Installs: Apache (mpm_event + http2), one PHP-FPM pool per requested version
+          (Ondrej PPA, per-user pools), MariaDB, wp-cli, and certbot for
+          HTTPS. Sites get HTTPS via
+          `site-create.sh --tls=letsencrypt --email=ADDR`.
+          Provisions the default site owner `litesoup` at
+          /home/litesoup/webapps/ with a per-user pool at
+          PHP_VERSION_DEFAULT (8.2).
 EOF
 }
 
@@ -96,24 +101,27 @@ main() {
   require_root
   require_ubuntu_2404
 
-  log_info "stage 1/5: apache"
+  log_info "stage 1/6: apache"
   ensure_apache
 
-  log_info "stage 2/5: php (versions: ${php_versions[*]})"
+  log_info "stage 2/6: php (versions: ${php_versions[*]})"
   for v in "${php_versions[@]}"; do
     log_info "  -> php ${v}"
     ensure_php_fpm "${v}"
   done
 
-  log_info "stage 3/5: default site owner (${DEFAULT_SITE_USER}) + per-user pool @ ${PHP_VERSION_DEFAULT}"
+  log_info "stage 3/6: default site owner (${DEFAULT_SITE_USER}) + per-user pool @ ${PHP_VERSION_DEFAULT}"
   ensure_user "${DEFAULT_SITE_USER}"
   ensure_php_pool_for_user "${DEFAULT_SITE_USER}" "${PHP_VERSION_DEFAULT}"
 
-  log_info "stage 4/5: mariadb"
+  log_info "stage 4/6: mariadb"
   ensure_mariadb
 
-  log_info "stage 5/5: wp-cli"
+  log_info "stage 5/6: wp-cli"
   ensure_wp_cli
+
+  log_info "stage 6/6: certbot (LE auto-renewal)"
+  ensure_certbot
 
   log_info "litesoup install-stack: COMPLETE"
 }
