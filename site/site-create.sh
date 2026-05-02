@@ -21,6 +21,10 @@ source "${REPO_ROOT}/install/lib/users.sh"
 source "${REPO_ROOT}/install/lib/php.sh"
 # shellcheck source=../install/lib/mariadb.sh
 source "${REPO_ROOT}/install/lib/mariadb.sh"
+# shellcheck source=../install/lib/certbot.sh
+source "${REPO_ROOT}/install/lib/certbot.sh"
+# shellcheck source=./_vhost_render.sh
+source "${REPO_ROOT}/site/_vhost_render.sh"
 
 # Test hook: bats can replace functions that need real root / a real system by
 # sourcing a stub file. Requires TWO explicit env vars to defend against
@@ -37,16 +41,24 @@ fi
 DOMAIN=""
 SITE_USER="${DEFAULT_SITE_USER}"
 PHP_VERSION="${PHP_VERSION_DEFAULT}"
+TLS_MODE="none"
+TLS_EMAIL=""
 
 usage() {
   cat <<'EOF'
 litesoup site-create -- provision a WordPress site
 
-Usage: sudo bash site-create.sh --domain=DOMAIN [--user=NAME] [--php=X.Y] [--dry-run]
-  --user=NAME   System user that will own the docroot and run PHP-FPM
-                (default: litesoup; created if missing)
-  --php=X.Y     PHP version for this site (default: PHP_VERSION_DEFAULT, 8.2;
-                allowed: any version installed by install-stack)
+Usage: sudo bash site-create.sh --domain=DOMAIN [--user=NAME] [--php=X.Y] \
+                                [--tls=letsencrypt|self-signed|none] [--email=ADDR] \
+                                [--dry-run]
+  --user=NAME    System user that will own the docroot and run PHP-FPM
+                 (default: litesoup; created if missing)
+  --php=X.Y      PHP version for this site (default: PHP_VERSION_DEFAULT)
+  --tls=MODE     TLS mode (default: none -- v0.2 back-compat).
+                 letsencrypt: real LE cert via HTTP-01 (requires --email)
+                 self-signed: openssl-generated cert at /etc/litesoup/ssl/<d>/
+                 none:        HTTP only
+  --email=ADDR   Required when --tls=letsencrypt; LE expiry notices go here
 EOF
 }
 
@@ -57,6 +69,8 @@ parse_args() {
       --domain=*) DOMAIN="${arg#*=}" ;;
       --user=*)   SITE_USER="${arg#*=}" ;;
       --php=*)    PHP_VERSION="${arg#*=}" ;;
+      --tls=*)    TLS_MODE="${arg#*=}" ;;
+      --email=*)  TLS_EMAIL="${arg#*=}" ;;
       --dry-run)  DRY_RUN=1 ;;
       --help|-h)  usage; exit 0 ;;
       *) log_error "unknown argument: ${arg}"; usage; exit 64 ;;
@@ -74,6 +88,13 @@ parse_args() {
   fi
   validate_php_version "${PHP_VERSION}" \
     || { log_error "unsupported PHP version: ${PHP_VERSION} (allowed: ${SUPPORTED_PHP_VERSIONS[*]})"; exit 64; }
+  case "${TLS_MODE}" in
+    letsencrypt|self-signed|none) ;;
+    *) log_error "--tls must be one of: letsencrypt, self-signed, none (got '${TLS_MODE}')"; exit 64 ;;
+  esac
+  if [ "${TLS_MODE}" = "letsencrypt" ] && [ -z "${TLS_EMAIL}" ]; then
+    log_error "--tls=letsencrypt requires --email=ADDR"; exit 64
+  fi
 }
 
 # Derive a DB identifier from the domain (mariadb name limit = 64; we stay short).
@@ -120,29 +141,6 @@ create_docroot() {
   DOCROOT="${docroot}"
 }
 
-write_vhost() {
-  local socket vhost
-  socket="$(php_fpm_socket_for_user "${SITE_USER}" "${PHP_VERSION}")"
-  vhost="/etc/apache2/sites-available/${DOMAIN}.conf"
-
-  if [ "${DRY_RUN}" = "1" ]; then
-    log_info "[DRYRUN] would render vhost ${vhost} (socket=${socket})"
-    return 0
-  fi
-  # __HTTP_REDIRECT__ and __HTTPS_BLOCK__ are TLS-mode placeholders introduced
-  # in Plan I.D. Until Task 6 wires up per-site TLS, this script is HTTP-only
-  # and renders both placeholders to empty strings so the template stays
-  # back-compat. Task 6 replaces this whole render with site/_vhost_render.sh.
-  sed -e "s|__DOMAIN__|${DOMAIN}|g" \
-      -e "s|__DOCROOT__|${DOCROOT}|g" \
-      -e "s|__FPM_SOCKET__|${socket}|g" \
-      -e "s|__HTTP_REDIRECT__||g" \
-      -e "s|__HTTPS_BLOCK__||g" \
-      "${REPO_ROOT}/templates/apache/vhost.conf.tmpl" >"${vhost}"
-  a2ensite "${DOMAIN}.conf" >/dev/null
-  systemctl reload apache2
-}
-
 download_wordpress() {
   if [ "${DRY_RUN}" = "1" ]; then
     log_info "[DRYRUN] would wp core download into ${DOCROOT} as ${SITE_USER}"
@@ -158,17 +156,35 @@ main() {
   parse_args "$@"
   require_root
 
-  log_info "site-create: ${DOMAIN} (owner=${SITE_USER}, php=${PHP_VERSION})"
+  log_info "site-create: ${DOMAIN} (owner=${SITE_USER}, php=${PHP_VERSION}, tls=${TLS_MODE})"
   ensure_user "${SITE_USER}"
   ensure_php_pool_for_user "${SITE_USER}" "${PHP_VERSION}"
   create_database
   create_docroot
-  write_vhost
+
+  # For LE we MUST have the HTTP-only vhost up first so the HTTP-01 challenge
+  # under /.well-known/acme-challenge/ can be served. For self-signed we can
+  # generate the cert before any vhost work.
+  if [ "${TLS_MODE}" = "letsencrypt" ]; then
+    TLS_MODE="none" write_vhost          # render HTTP-only vhost first
+    certbot_obtain "${DOMAIN}" "${TLS_EMAIL}" "${DOCROOT}" \
+      || { log_error "site-create: LE failed for ${DOMAIN}; site exists with HTTP only. Run site-set-tls --tls=self-signed if you need TLS now."; exit 1; }
+    write_vhost                           # re-render with HTTPS block
+  elif [ "${TLS_MODE}" = "self-signed" ]; then
+    certbot_self_signed "${DOMAIN}"
+    write_vhost
+  else
+    write_vhost                           # tls=none, HTTP only
+  fi
+
   download_wordpress
 
-  log_info "site-create: ${DOMAIN} -> http://${DOMAIN}/wp-admin/install.php"
+  local scheme="http"
+  [ "${TLS_MODE}" != "none" ] && scheme="https"
+  log_info "site-create: ${DOMAIN} -> ${scheme}://${DOMAIN}/wp-admin/install.php"
   log_info "site-create: docroot ${DOCROOT}"
-  log_info "site-create: php  ${PHP_VERSION} (socket $(php_fpm_socket_for_user "${SITE_USER}" "${PHP_VERSION}"))"
+  log_info "site-create: php ${PHP_VERSION} (socket $(php_fpm_socket_for_user "${SITE_USER}" "${PHP_VERSION}"))"
+  log_info "site-create: tls ${TLS_MODE}"
 }
 
 main "$@"
