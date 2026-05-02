@@ -22,16 +22,31 @@ source "${REPO_ROOT}/install/lib/php.sh"
 # shellcheck source=../install/lib/mariadb.sh
 source "${REPO_ROOT}/install/lib/mariadb.sh"
 
+# Test hook: bats can replace functions that need real root / a real system by
+# sourcing a stub file. Requires TWO explicit env vars to defend against
+# attacker-controlled environments where only LITESOUP_TEST_STUBS might be set
+# (the second var is intentionally undocumented outside this file -- production
+# users never set it).
+if [ "${LITESOUP_ALLOW_TEST_STUBS:-0}" = "1" ] \
+   && [ -n "${LITESOUP_TEST_STUBS:-}" ] \
+   && [ -f "${LITESOUP_TEST_STUBS}" ]; then
+  # shellcheck disable=SC1090
+  source "${LITESOUP_TEST_STUBS}"
+fi
+
 DOMAIN=""
 SITE_USER="${DEFAULT_SITE_USER}"
+PHP_VERSION="${PHP_VERSION_DEFAULT}"
 
 usage() {
   cat <<'EOF'
 litesoup site-create -- provision a WordPress site
 
-Usage: sudo bash site-create.sh --domain=DOMAIN [--user=NAME] [--dry-run]
+Usage: sudo bash site-create.sh --domain=DOMAIN [--user=NAME] [--php=X.Y] [--dry-run]
   --user=NAME   System user that will own the docroot and run PHP-FPM
                 (default: litesoup; created if missing)
+  --php=X.Y     PHP version for this site (default: PHP_VERSION_DEFAULT, 8.2;
+                allowed: any version installed by install-stack)
 EOF
 }
 
@@ -41,6 +56,7 @@ parse_args() {
     case "${arg}" in
       --domain=*) DOMAIN="${arg#*=}" ;;
       --user=*)   SITE_USER="${arg#*=}" ;;
+      --php=*)    PHP_VERSION="${arg#*=}" ;;
       --dry-run)  DRY_RUN=1 ;;
       --help|-h)  usage; exit 0 ;;
       *) log_error "unknown argument: ${arg}"; usage; exit 64 ;;
@@ -56,6 +72,8 @@ parse_args() {
   if ! [[ "${SITE_USER}" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then
     log_error "invalid user name: ${SITE_USER}"; exit 64
   fi
+  validate_php_version "${PHP_VERSION}" \
+    || { log_error "unsupported PHP version: ${PHP_VERSION} (allowed: ${SUPPORTED_PHP_VERSIONS[*]})"; exit 64; }
 }
 
 # Derive a DB identifier from the domain (mariadb name limit = 64; we stay short).
@@ -68,7 +86,17 @@ create_database() {
   local db user pw
   db="$(db_ident_for "${DOMAIN}")"
   user="${db}"
-  pw="$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 24 || true)"
+  # Generate a 24-char alphanumeric password. Three quirks bundled in here:
+  #   1. LC_ALL=C: BSD tr (macOS) emits "Illegal byte sequence" on binary
+  #      input under UTF-8 locale; GNU tr is unaffected.
+  #   2. set +o pipefail: head -c 24 closes the pipe before tr finishes
+  #      reading /dev/urandom, which makes tr exit 141 (SIGPIPE) under the
+  #      script's pipefail. Scope the disable to the subshell so the rest of
+  #      the script keeps pipefail.
+  #   3. Length check: defend against truncation; we want a real 24-char
+  #      password, never a passwordless MariaDB user from a silent failure.
+  pw="$(set +o pipefail; LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom 2>/dev/null | head -c 24)"
+  [ "${#pw}" -eq 24 ] || { log_error "site-create: failed to generate 24-char DB password (got '${#pw}' chars)"; exit 1; }
 
   if [ "${DRY_RUN}" = "1" ]; then
     log_info "[DRYRUN] would create db ${db} and user ${user}"
@@ -94,7 +122,7 @@ create_docroot() {
 
 write_vhost() {
   local socket vhost
-  socket="$(php_fpm_socket_for_user "${SITE_USER}" 8.2)"
+  socket="$(php_fpm_socket_for_user "${SITE_USER}" "${PHP_VERSION}")"
   vhost="/etc/apache2/sites-available/${DOMAIN}.conf"
 
   if [ "${DRY_RUN}" = "1" ]; then
@@ -124,9 +152,9 @@ main() {
   parse_args "$@"
   require_root
 
-  log_info "site-create: ${DOMAIN} (owner=${SITE_USER})"
+  log_info "site-create: ${DOMAIN} (owner=${SITE_USER}, php=${PHP_VERSION})"
   ensure_user "${SITE_USER}"
-  ensure_php_82_pool_for_user "${SITE_USER}"
+  ensure_php_pool_for_user "${SITE_USER}" "${PHP_VERSION}"
   create_database
   create_docroot
   write_vhost
@@ -134,6 +162,7 @@ main() {
 
   log_info "site-create: ${DOMAIN} -> http://${DOMAIN}/wp-admin/install.php"
   log_info "site-create: docroot ${DOCROOT}"
+  log_info "site-create: php  ${PHP_VERSION} (socket $(php_fpm_socket_for_user "${SITE_USER}" "${PHP_VERSION}"))"
 }
 
 main "$@"

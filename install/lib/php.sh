@@ -9,6 +9,21 @@ LITESOUP_PHP_SH=1
 
 PHP_VERSION_DEFAULT="8.2"
 
+# All PHP versions this installer knows how to provision via Ondrej PPA.
+# Plan I.B scope; expand here when a new release lands.
+SUPPORTED_PHP_VERSIONS=(8.0 8.1 8.2 8.3 8.4 8.5)
+
+# validate_php_version VERSION -- exits 0 if VERSION is in SUPPORTED_PHP_VERSIONS,
+# 1 otherwise. Caller is responsible for any user-facing error message.
+validate_php_version() {
+  local v="${1:?validate_php_version: version required}"
+  local s
+  for s in "${SUPPORTED_PHP_VERSIONS[@]}"; do
+    [ "${s}" = "${v}" ] && return 0
+  done
+  return 1
+}
+
 PHP_EXTENSIONS=(
   fpm cli common opcache mysql mbstring xml curl gd zip intl bcmath soap imagick redis
 )
@@ -20,32 +35,42 @@ _php_repo_root() {
   ( cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd )
 }
 
-ensure_php_82_fpm() {
-  ensure_ppa "ppa:ondrej/php" "/etc/apt/sources.list.d/ondrej-ubuntu-php-noble.sources"
+# ensure_php_fpm VERSION -- install PHP <VERSION> + extensions + FPM via Ondrej PPA,
+# then disable the default www.conf pool so every site must run via a per-user
+# pool. Idempotent.
+ensure_php_fpm() {
+  local v="${1:?ensure_php_fpm: version required}"
+  validate_php_version "${v}" \
+    || { log_error "php: unsupported version ${v} (allowed: ${SUPPORTED_PHP_VERSIONS[*]})"; return 1; }
 
-  local pkgs=()
-  local ext
+  ensure_ppa "ppa:ondrej/php" "/etc/apt/sources.list.d/ondrej-ubuntu-php-noble.sources" \
+    || { log_error "php: cannot install ${v} without ondrej PPA"; return 1; }
+
+  local pkgs=() ext
   for ext in "${PHP_EXTENSIONS[@]}"; do
-    pkgs+=("php${PHP_VERSION_DEFAULT}-${ext}")
+    pkgs+=("php${v}-${ext}")
   done
   ensure_pkgs "${pkgs[@]}"
 
-  # CLI default -> 8.2
-  if command -v update-alternatives >/dev/null 2>&1; then
-    run_or_dryrun update-alternatives --set php "/usr/bin/php${PHP_VERSION_DEFAULT}"
+  # Default `php` CLI -> PHP_VERSION_DEFAULT (only set when installing it).
+  if [ "${v}" = "${PHP_VERSION_DEFAULT}" ] && command -v update-alternatives >/dev/null 2>&1; then
+    run_or_dryrun update-alternatives --set php "/usr/bin/php${v}"
   fi
 
-  # Start FPM with its default www.conf pool first, then immediately disable
-  # the default pool -- every site must run as its owner via a per-user pool.
-  # Renaming (rather than deleting) preserves the upstream copy for reference
-  # and lets re-runs detect "already disabled".
-  run_or_dryrun systemctl enable --now "php${PHP_VERSION_DEFAULT}-fpm"
+  # Start FPM with its default www.conf pool first, then disable that pool.
+  run_or_dryrun systemctl enable --now "php${v}-fpm"
 
-  local default_pool="/etc/php/${PHP_VERSION_DEFAULT}/fpm/pool.d/www.conf"
+  local default_pool="/etc/php/${v}/fpm/pool.d/www.conf"
   if [ -f "${default_pool}" ]; then
     run_or_dryrun mv "${default_pool}" "${default_pool}.disabled"
-    run_or_dryrun systemctl reload "php${PHP_VERSION_DEFAULT}-fpm"
+    run_or_dryrun systemctl reload "php${v}-fpm"
   fi
+}
+
+# DEPRECATED -- kept as a back-compat shim for v0.1.0 callers. Removed in v0.3.0.
+ensure_php_82_fpm() {
+  log_warn "ensure_php_82_fpm is deprecated; use ensure_php_fpm 8.2"
+  ensure_php_fpm "8.2"
 }
 
 # Per-user FPM socket path. Pool key = <user>-php<version>.
@@ -54,11 +79,20 @@ php_fpm_socket_for_user() {
   echo "/run/php/${user}-php${v}-fpm.sock"
 }
 
-# Render and install a per-user FPM pool config, then reload php-fpm.
-# Idempotent: re-running with the same user is a no-op.
-ensure_php_82_pool_for_user() {
+# ensure_php_pool_for_user USER VERSION -- create a per-user FPM pool for
+# PHP <VERSION>, owned by USER, listening on /run/php/<USER>-php<VERSION>-fpm.sock.
+# Idempotent. Validates that PHP <VERSION> is installed before writing the pool.
+ensure_php_pool_for_user() {
   local user="${1:?user required}"
-  local v="${PHP_VERSION_DEFAULT}"
+  local v="${2:?version required}"
+  validate_php_version "${v}" \
+    || { log_error "php: unsupported version ${v}"; return 1; }
+
+  if [ "${DRY_RUN}" != "1" ] && [ ! -d "/etc/php/${v}/fpm/pool.d" ]; then
+    log_error "php: php${v}-fpm is not installed (run install-stack with --php-versions including ${v})"
+    return 1
+  fi
+
   local pool="${user}-php${v}"
   local conf="/etc/php/${v}/fpm/pool.d/${pool}.conf"
   local socket
@@ -96,12 +130,25 @@ ensure_php_82_pool_for_user() {
         "${repo_root}/templates/php/pool.conf.tmpl" >"${conf}"
   fi
 
-  # Validate the new pool config before asking systemd to reload — fail fast
-  # if the rendered template is broken.
   if [ "${DRY_RUN}" != "1" ]; then
-    "/usr/sbin/php-fpm${v}" --test 2>/dev/null \
-      || { log_error "php: pool config test failed for php${v}-fpm"; return 1; }
+    # Capture --test stderr so the operator sees the actual syntax error
+    # (line number, bad directive) instead of just a generic failure message.
+    local fpm_test_err
+    fpm_test_err="$(mktemp)"
+    if ! "/usr/sbin/php-fpm${v}" --test 2>"${fpm_test_err}"; then
+      log_error "php: pool config test failed for php${v}-fpm"
+      cat "${fpm_test_err}" >&2
+      rm -f "${fpm_test_err}"
+      return 1
+    fi
+    rm -f "${fpm_test_err}"
   fi
   run_or_dryrun systemctl reload "php${v}-fpm" \
     || run_or_dryrun systemctl restart "php${v}-fpm"
+}
+
+# DEPRECATED -- kept as a back-compat shim for v0.1.0 callers. Removed in v0.3.0.
+ensure_php_82_pool_for_user() {
+  log_warn "ensure_php_82_pool_for_user is deprecated; use ensure_php_pool_for_user <user> 8.2"
+  ensure_php_pool_for_user "${1}" "8.2"
 }

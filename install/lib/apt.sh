@@ -48,18 +48,17 @@ ensure_ppa() {
   ensure_pkgs software-properties-common gnupg
   log_info "apt: adding PPA ${ppa}"
 
-  # Try add-apt-repository first; if Launchpad API is unreachable (504),
-  # fall back to manual PPA registration with direct key import.
+  # Try add-apt-repository first; if it fails for ANY reason (Launchpad 504,
+  # IPv6 connect error, DNS, slow CI mirror), fall back to manual PPA
+  # registration when we have a hardcoded key mapping for this PPA.
   local err_log
   err_log="$(mktemp /tmp/litesoup-ppa-err.XXXXXX.log)"
   # shellcheck disable=SC2064
   trap "rm -f '${err_log}'" RETURN
   if ! run_or_dryrun add-apt-repository -y "${ppa}" 2>"${err_log}"; then
-    if grep -q '504\|Gateway Time-out\|timed out' "${err_log}" 2>/dev/null; then
-      log_info "apt: Launchpad API unreachable, registering PPA manually"
-      _ensure_ppa_manual "${ppa}" "${probe}"
-    else
-      log_error "apt: add-apt-repository failed for ${ppa}"
+    log_warn "apt: add-apt-repository failed for ${ppa}, attempting manual registration"
+    if ! _ensure_ppa_manual "${ppa}" "${probe}"; then
+      log_error "apt: add-apt-repository failed and no manual fallback available"
       cat "${err_log}" >&2
       return 1
     fi

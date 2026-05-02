@@ -6,22 +6,44 @@ Litesoup is a one-line bash installer that turns a fresh Ubuntu 24.04 server int
 
 ## Status
 
-**v0.1 — Plan I.A landed (2026-05-01):** the MVP WordPress stack installer is shippable. A fresh Ubuntu 24.04 host can be turned into a working WordPress server in one command.
+**v0.2 — Plan I.B landed (2026-05-02):** multi-version PHP. Install any subset of PHP 8.0–8.5 side-by-side; pick the version per site with `--php=X.Y`. v0.1.0 callers keep working via deprecated shims.
+
+**v0.1 — Plan I.A (2026-05-01):** initial MVP WordPress stack installer.
 
 ## Quickstart (Ubuntu 24.04 only)
 
 ```bash
 git clone https://github.com/codetot-web/litesoup.git
 cd litesoup
-sudo bash install/install-stack.sh
-sudo bash site/site-create.sh --domain=example.test
+sudo bash install/install-stack.sh                                  # default: PHP 8.2 + 8.3 + 8.4
+sudo bash site/site-create.sh --domain=example.test                 # default site → PHP 8.2
+sudo bash site/site-create.sh --domain=legacy.test --php=8.1        # legacy site → PHP 8.1 (must be installed)
 curl -H 'Host: example.test' http://127.0.0.1/wp-admin/install.php
+```
+
+## Multi-version PHP (v0.2)
+
+`install-stack.sh --php-versions=X.Y[,X.Y…]` installs any subset of `8.0, 8.1, 8.2, 8.3, 8.4, 8.5` side-by-side via the Ondrej PPA. Default if the flag is omitted: `8.2,8.3,8.4`. The default version (`PHP_VERSION_DEFAULT`, currently 8.2) must be in the install set so the default user has a pool to land on.
+
+`site-create.sh --domain=DOMAIN --php=X.Y` pins a site to the chosen PHP version (default 8.2). The version must already be installed.
+
+Each site owner gets one FPM pool per version it uses, named `<user>-php<version>` and listening on `/run/php/<user>-php<version>-fpm.sock`. A user can host multiple sites at different PHP versions (one pool per active version).
+
+```bash
+# Install PHP 8.2 + 8.4 only
+sudo bash install/install-stack.sh --php-versions=8.2,8.4
+
+# Site on PHP 8.2 (default)
+sudo bash site/site-create.sh --domain=alpha.test
+
+# Site on PHP 8.4
+sudo bash site/site-create.sh --domain=beta.test --php=8.4
 ```
 
 ## What's installed by `install-stack.sh`
 
 - **Apache 2.4** with `mpm_event` + `mod_proxy_fcgi` + `mod_rewrite` + `mod_headers` + `mod_ssl`
-- **PHP 8.2** (FPM + CLI) via the [Ondrej Surý PPA](https://launchpad.net/~ondrej/+archive/ubuntu/php), with the standard WordPress extension set (`opcache`, `mysql`, `mbstring`, `xml`, `curl`, `gd`, `zip`, `intl`, `bcmath`, `soap`, `imagick`, `redis`)
+- **PHP** (FPM + CLI) via the [Ondrej Surý PPA](https://launchpad.net/~ondrej/+archive/ubuntu/php), with the standard WordPress extension set (`opcache`, `mysql`, `mbstring`, `xml`, `curl`, `gd`, `zip`, `intl`, `bcmath`, `soap`, `imagick`, `redis`). Default install set: `8.2, 8.3, 8.4`. Other versions in `8.0–8.5` available via `--php-versions=`.
 - **MariaDB 10.x** with non-interactive secure baseline (random root password stored at `/root/.litesoup-mariadb-root` mode `0600`)
 - **wp-cli** (installed to `/usr/local/bin/wp`, sha512-verified)
 - A system user **`litesoup`** (no shell, home `/home/litesoup` mode `0711`) and a **per-user PHP-FPM pool** at `/run/php/litesoup-php8.2-fpm.sock` running as the `litesoup` user with `open_basedir` confined to `/home/litesoup/webapps/`. The default Ubuntu `www-data` pool is **disabled** — every site runs under its owner UID, never as Apache.
@@ -31,7 +53,7 @@ curl -H 'Host: example.test' http://127.0.0.1/wp-admin/install.php
 - `disable_functions` blocks `exec`, `passthru`, `shell_exec`, `system`, `proc_open`, `popen`, `pcntl_exec`, `proc_get_status` (none used by WordPress core)
 - `expose_php = off`, `allow_url_fopen = off`, `allow_url_include = off`
 - `open_basedir` scoped to per-user dirs only — no shared `/tmp` or system session paths
-- `pm = ondemand` with `pm.max_children = 5` (sane default for v1; tuneable in Plan I.B)
+- `pm = ondemand` with `pm.max_children = 5` (sane default for v1 + v0.2; per-tier sizing comes in Plan I.C)
 
 ## Filesystem layout
 
@@ -50,9 +72,8 @@ To run a site under a different system user (e.g., per-client isolation), pass `
 
 ## What's deferred to later sub-plans
 
-- **Plan I.B** — multi-version PHP (8.0/8.1/8.3/8.4/8.5) + per-site `--php=X.Y` flag
-- **Plan I.C** — Redis + Memcached + per-site Apache FastCGI cache + Redis object cache auto-config
-- **Plan I.D** — `ufw`, `fail2ban`, `unattended-upgrades`, certbot/TLS, broader hardening, distro-detection beyond Ubuntu 24.04, and Sigstore-signed releases
+- **Plan I.C** — `site-set-php` (change a live site's PHP version), per-tier pool sizing (small/medium/large `pm.max_children`), Redis + Memcached + per-site Apache FastCGI cache + Redis object cache auto-config
+- **Plan I.D** — `install-stack --remove-php=X.Y`, `ufw`, `fail2ban`, `unattended-upgrades`, certbot/TLS, broader hardening, distro-detection beyond Ubuntu 24.04, and Sigstore-signed releases
 - **Plan H** — bash-scripts reorganization into `audit/`, `harden/`, `tune/` directories
 - **Plans A / J / E** — VPS migration, two-tier dashboard, client tenant portal
 
