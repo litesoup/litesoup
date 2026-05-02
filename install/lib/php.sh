@@ -43,7 +43,8 @@ ensure_php_fpm() {
   validate_php_version "${v}" \
     || { log_error "php: unsupported version ${v} (allowed: ${SUPPORTED_PHP_VERSIONS[*]})"; return 1; }
 
-  ensure_ppa "ppa:ondrej/php" "/etc/apt/sources.list.d/ondrej-ubuntu-php-noble.sources"
+  ensure_ppa "ppa:ondrej/php" "/etc/apt/sources.list.d/ondrej-ubuntu-php-noble.sources" \
+    || { log_error "php: cannot install ${v} without ondrej PPA"; return 1; }
 
   local pkgs=() ext
   for ext in "${PHP_EXTENSIONS[@]}"; do
@@ -130,8 +131,17 @@ ensure_php_pool_for_user() {
   fi
 
   if [ "${DRY_RUN}" != "1" ]; then
-    "/usr/sbin/php-fpm${v}" --test 2>/dev/null \
-      || { log_error "php: pool config test failed for php${v}-fpm"; return 1; }
+    # Capture --test stderr so the operator sees the actual syntax error
+    # (line number, bad directive) instead of just a generic failure message.
+    local fpm_test_err
+    fpm_test_err="$(mktemp)"
+    if ! "/usr/sbin/php-fpm${v}" --test 2>"${fpm_test_err}"; then
+      log_error "php: pool config test failed for php${v}-fpm"
+      cat "${fpm_test_err}" >&2
+      rm -f "${fpm_test_err}"
+      return 1
+    fi
+    rm -f "${fpm_test_err}"
   fi
   run_or_dryrun systemctl reload "php${v}-fpm" \
     || run_or_dryrun systemctl restart "php${v}-fpm"

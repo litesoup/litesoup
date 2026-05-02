@@ -22,10 +22,14 @@ source "${REPO_ROOT}/install/lib/php.sh"
 # shellcheck source=../install/lib/mariadb.sh
 source "${REPO_ROOT}/install/lib/mariadb.sh"
 
-# Test hook: when LITESOUP_TEST_STUBS is set, source it after the lib block so
-# bats can replace functions that need real root / a real system. Production
-# callers never set this variable.
-if [ -n "${LITESOUP_TEST_STUBS:-}" ] && [ -f "${LITESOUP_TEST_STUBS}" ]; then
+# Test hook: bats can replace functions that need real root / a real system by
+# sourcing a stub file. Requires TWO explicit env vars to defend against
+# attacker-controlled environments where only LITESOUP_TEST_STUBS might be set
+# (the second var is intentionally undocumented outside this file -- production
+# users never set it).
+if [ "${LITESOUP_ALLOW_TEST_STUBS:-0}" = "1" ] \
+   && [ -n "${LITESOUP_TEST_STUBS:-}" ] \
+   && [ -f "${LITESOUP_TEST_STUBS}" ]; then
   # shellcheck disable=SC1090
   source "${LITESOUP_TEST_STUBS}"
 fi
@@ -82,7 +86,17 @@ create_database() {
   local db user pw
   db="$(db_ident_for "${DOMAIN}")"
   user="${db}"
-  pw="$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 24 || true)"
+  # Generate a 24-char alphanumeric password. Three quirks bundled in here:
+  #   1. LC_ALL=C: BSD tr (macOS) emits "Illegal byte sequence" on binary
+  #      input under UTF-8 locale; GNU tr is unaffected.
+  #   2. set +o pipefail: head -c 24 closes the pipe before tr finishes
+  #      reading /dev/urandom, which makes tr exit 141 (SIGPIPE) under the
+  #      script's pipefail. Scope the disable to the subshell so the rest of
+  #      the script keeps pipefail.
+  #   3. Length check: defend against truncation; we want a real 24-char
+  #      password, never a passwordless MariaDB user from a silent failure.
+  pw="$(set +o pipefail; LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom 2>/dev/null | head -c 24)"
+  [ "${#pw}" -eq 24 ] || { log_error "site-create: failed to generate 24-char DB password (got '${#pw}' chars)"; exit 1; }
 
   if [ "${DRY_RUN}" = "1" ]; then
     log_info "[DRYRUN] would create db ${db} and user ${user}"
