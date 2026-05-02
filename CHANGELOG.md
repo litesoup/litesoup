@@ -6,6 +6,75 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Fixed
+
+- **CI / install-stack PPA reachability** (closes codetot-web/litesoup#14):
+  `install/lib/apt.sh` `ensure_ppa()` now probes apt-get update for our
+  specific URI after `add-apt-repository` succeeds, and dispatches to a
+  per-PPA mirror when the URI fails to fetch. Previously: GitHub Actions
+  ubuntu-24.04 runners and DO Singapore VPSes (incl. sg10.codetot.org)
+  couldn't reach `ppa.launchpadcontent.net:443` (TLS handshake failure
+  / 503 / connection timed out); apt-get update returned 0 with
+  warnings, then the next apt-get install died with "Unable to locate
+  package php8.2-fpm" because the PPA index never made it into the
+  cache. CI has been red on main since the v0.3.0 / I.D merge for
+  exactly this reason.
+
+  Mirror chosen: **packages.cloudpanel.io** (CloudPanel CE's
+  CloudFront-fronted apt mirror, repackaged Sury PHP builds for
+  Ubuntu noble/jammy + Debian). Same package names, byte-equivalent
+  installs (version suffix `+clp-noble` vs upstream). GPG fingerprint
+  pinned to `4FFD41A7CB8F2CEA5F75E6CC1FD0B9CFEFC59AC9` so silent key
+  rotation fails loudly. arm64/amd64 origin auto-detected via
+  `dpkg --print-architecture`.
+
+  **Coverage caveat:** CloudPanel mirrors core PHP + standard
+  extensions but NOT PECL extensions (`php-imagick`, `php-redis`).
+  Both ARE in the launchpad PPA. To handle this without aborting on
+  CloudPanel-fallback networks, `PHP_EXTENSIONS` was split:
+  - `PHP_EXTENSIONS_CORE` (required, aborts if missing): fpm, cli,
+    common, opcache, mysql, mbstring, xml, curl, gd, zip, intl,
+    bcmath, soap.
+  - `PHP_EXTENSIONS_OPTIONAL` (best-effort, log_warn + skip when
+    not in configured repos): imagick, redis.
+
+  When skipped, WP Redis Object Cache automatically falls back to the
+  bundled Predis pure-PHP client (slower but functional); WP image
+  processing falls back to GD (already in CORE).
+
+  New apt.sh helper: `ensure_pkgs_optional` uses `apt-cache policy`
+  (stricter than `apt-cache show`, which returns 0 even for packages
+  only referenced as dep names) to filter to packages with a real
+  Candidate before invoking `apt_install`.
+
+  End-to-end verified on sg10.codetot.org (Ubuntu 24.04.4 LTS, DO
+  Singapore, launchpad genuinely blocked): all 8 install-stack stages
+  PASS, php8.2-fpm + 12 standard extensions installed from CloudPanel
+  mirror, php8.2-imagick + php8.2-redis correctly skipped with
+  warning, redis-server + memcached configured, site-create injects
+  cache constants across two sites with distinct salts and is
+  idempotent on re-run.
+
+  Long-term posture: self-host an aptly mirror of `ppa:ondrej/php`
+  and remove this third-party dependency. Filed as a separate
+  follow-up.
+
+- **WP_CACHE_KEY_SALT injection deferred to wp-cli native generation**:
+  WP-CLI 2.12.0+ generates `WP_CACHE_KEY_SALT` natively in
+  `wp config create` using the full WordPress secret-key alphabet
+  (higher entropy than our 64-char hex). The existing `wp config has`
+  guard in `inject_cache_constants()` correctly defers — our injection
+  is now a fallback for older wp-cli releases. Test assertions
+  relaxed accordingly (length ≥ 32 + non-empty + distinct across two
+  sites, instead of `^[0-9a-f]{64}$`).
+
+### Added
+
+- 11 new bats unit tests in `test/bats/unit_apt.bats` covering
+  `ensure_pkgs_optional`, `_ppa_reachable_or_fallback`,
+  `_ppa_fallback`, and `_ensure_repo_cloudpanel_php` (dry-run path).
+  Total bats unit tests: 80 → 91.
+
 ## [0.5.0] - 2026-05-02
 
 Plan I.F: caching infrastructure (Redis + Memcached) plus per-site

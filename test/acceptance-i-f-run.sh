@@ -108,7 +108,7 @@ docker exec "${CTR}" bash -lc '
   echo "  alpha salt: ${salt1:0:8}... (${#salt1} chars)"
   echo "  beta  salt: ${salt2:0:8}... (${#salt2} chars)"
   # wp-cli 2.12+ generates WP_CACHE_KEY_SALT itself (full WP secret-key alphabet);
-  # older wp-cli falls back to site-create.sh's 64-char hex injection. Accept either.
+  # older wp-cli falls back to the site-create.sh 64-char hex injection. Accept either.
   [ -n "${salt1}" ] && [ "${#salt1}" -ge 32 ] || { echo "FAIL: alpha salt empty/short"; exit 1; }
   [ -n "${salt2}" ] && [ "${#salt2}" -ge 32 ] || { echo "FAIL: beta salt empty/short"; exit 1; }
   [ "${salt1}" != "${salt2}" ]                || { echo "FAIL: salts collided"; exit 1; }
