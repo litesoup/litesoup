@@ -105,10 +105,7 @@ ensure_ppa() {
   trap "rm -f '${err_log}'" RETURN
 
   if run_or_dryrun add-apt-repository -y "${ppa}" 2>"${err_log}"; then
-    if ! _ppa_reachable_or_fallback "${ppa}" "${probe}"; then
-      log_error "apt: PPA ${ppa} added but unreachable, and no mirror fallback succeeded"
-      return 1
-    fi
+    : # add-apt-repository wrote the launchpad-style .sources file at ${probe}
   else
     log_warn "apt: add-apt-repository failed for ${ppa}, attempting manual registration"
     if ! _ensure_ppa_manual "${ppa}" "${probe}"; then
@@ -116,7 +113,19 @@ ensure_ppa() {
       cat "${err_log}" >&2
       return 1
     fi
-    _APT_UPDATED=0   # manual path didn't update; force refresh on next call
+  fi
+
+  # Either branch above wrote a launchpad-style .sources file at ${probe}.
+  # Verify the URI is actually reachable from here, and dispatch to a per-PPA
+  # mirror (currently CloudPanel for ondrej/php) if not. This catches both:
+  #   - networks where add-apt-repository succeeds but launchpadcontent.net
+  #     is then unreachable (the original bug), AND
+  #   - networks where add-apt-repository fails outright (CI here -- a
+  #     network flake fetching launchpad metadata) and our manual fallback
+  #     wrote a launchpad URL we still can't reach.
+  if ! _ppa_reachable_or_fallback "${ppa}" "${probe}"; then
+    log_error "apt: PPA ${ppa} added but unreachable, and no mirror fallback succeeded"
+    return 1
   fi
 }
 
