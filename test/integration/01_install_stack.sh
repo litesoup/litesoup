@@ -2,10 +2,12 @@
 # Runs install-stack.sh end-to-end inside container, then asserts services
 # and the default per-user pool layout.
 set -Eeuo pipefail
+trap 'echo "FAIL @ ${BASH_SOURCE##*/}:${LINENO}: ${BASH_COMMAND}" >&2' ERR
 cd /opt/litesoup
 
 bash install/install-stack.sh
 
+echo "[chk] post-install assertions"
 systemctl is-active --quiet apache2
 systemctl is-active --quiet php8.2-fpm
 systemctl is-active --quiet mariadb
