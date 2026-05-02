@@ -6,6 +6,39 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-02
+
+Plan I.D: TLS / Let's Encrypt. `site-create` and the new `site-set-tls` provision per-site HTTPS with auto-renewal. v0.2 callers (no `--tls=` flag) keep working unchanged.
+
+### Added
+
+- `site-create.sh --tls=letsencrypt|self-signed|none --email=ADDR` flag for per-site TLS at creation. `--tls=letsencrypt` requires `--email`; runs HTTP-01 challenge via Apache `.well-known/acme-challenge` after the HTTP-only vhost is up, then re-renders with the HTTPS block.
+- `site-set-tls.sh --domain=X --tls=Y [--email=Z]` operation: retroactively flip an existing v0.2 (or `--tls=none`) site to HTTPS. Looks up owner / php-version / docroot from the existing vhost, runs cert provisioning, rewrites the vhost. No DB / docroot / WP changes.
+- New `install/lib/certbot.sh` module: `ensure_certbot`, `ensure_certbot_renewal_timer`, `certbot_obtain`, `certbot_self_signed`, `certbot_revoke`, `certbot_paths_for_domain`.
+- New `site/_vhost_render.sh` shared lib: `write_vhost`, `existing_site_owner`, `existing_site_php`, `existing_site_docroot`. Used by `site-create.sh` and `site-set-tls.sh`. Renders the template via `python3` (already pulled in as a dep of `python3-certbot-apache`) so multi-line replacement is safe.
+- HTTPS vhost block: HTTP/2 (`Protocols h2 http/1.1`), TLSv1.2 + TLSv1.3 only, ECDHE-only ciphers, HSTS 1y + `includeSubDomains`, `Secure` flag on all cookies (`Header edit Set-Cookie`), HTTP→HTTPS 301 redirect on port 80 (with `/.well-known/acme-challenge/` exception so renewal works).
+- `install-stack.sh` stage 6/6: installs `certbot` + `python3-certbot-apache` from the Ubuntu archive (no PPA needed) and enables `certbot.timer` for auto-renewal.
+- `install/lib/apache.sh` baseline now enables `mod_http2` (free with the existing `apache2` package).
+- New bats unit suites: `unit_certbot.bats` (3 tests), `unit_site_set_tls.bats` (4 tests). 6 new tests appended to `unit_site_create.bats` covering `--tls` and `--email` flag combinations. Total bats coverage: 51 tests.
+- `test/acceptance-i-d-run.sh`: docker harness extended to provision `alpha.test` with `--tls=self-signed`, curl `https://...` (with `-k` for the self-signed cert), assert HTTP→HTTPS 301 redirect, then run `site-set-tls beta.test --tls=self-signed` to validate the retroactive upgrade path.
+
+### Changed
+
+- `templates/apache/vhost.conf.tmpl`: now contains conditional placeholders `__HTTP_REDIRECT__` and `__HTTPS_BLOCK__`. When `--tls=none` both are empty strings (back-compat with v0.2 sites). When TLS is active, the rendered vhost includes the full HTTPS server block plus HTTP→HTTPS redirect. Always-on `/.well-known/acme-challenge/` Alias on port 80 so renewal keeps working even after the rest of the site redirects.
+- `site-delete.sh` now best-effort revokes the LE cert (`certbot revoke --cert-name X`) and removes the `/etc/litesoup/ssl/<domain>/` dir on teardown. Safe to run on v0.2 sites with no TLS.
+- `install-stack.sh` stage labels renumbered from `1/5..5/5` to `1/6..5/6` to make room for stage 6 (certbot).
+- `install/lib/php.sh` write_vhost is gone from `site-create.sh` — moved to the shared lib `site/_vhost_render.sh` so `site-set-tls.sh` can reuse it.
+
+### Known limitations (deferred)
+
+- No `site-renew-tls` wrapper for forced renewal — use `certbot renew --force-renewal --cert-name X` directly.
+- No OCSP stapling — Plan I.E.
+- No domain-reachability gate before LE attempt — LE itself errors clearly; user re-runs with `--tls=self-signed`.
+- HTTP-01 challenge only — no DNS-01, no wildcard certs.
+- HSTS preload header is set but no automatic preload-list submission.
+
+[0.3.0]: https://github.com/codetot-web/litesoup/releases/tag/v0.3.0
+
 ## [0.2.0] - 2026-05-02
 
 Plan I.B: multi-version PHP. Builds directly on v0.1.0 — per-user pool naming was already pre-formatted as `<user>-php<version>` so on-disk layout, vhost template, and pool template are unchanged.
