@@ -83,3 +83,46 @@ setup() {
   DRY_RUN=1 run -0 ensure_php_82_pool_for_user alice
   assert_output --partial "alice-php8.2"
 }
+
+@test "SUPPORTED_POOL_TIERS contains small, medium, large" {
+  for t in small medium large; do
+    [[ " ${SUPPORTED_POOL_TIERS[*]} " == *" ${t} "* ]] \
+      || { echo "missing ${t} in SUPPORTED_POOL_TIERS"; return 1; }
+  done
+}
+
+@test "validate_pool_tier accepts supported tiers" {
+  run -0 validate_pool_tier "small"
+  run -0 validate_pool_tier "medium"
+  run -0 validate_pool_tier "large"
+}
+
+@test "validate_pool_tier rejects unsupported tiers" {
+  run -1 validate_pool_tier "huge"
+  run -1 validate_pool_tier "garbage"
+}
+
+@test "php_pool_tier_block small contains pm.max_children = 5" {
+  run -0 php_pool_tier_block "small"
+  assert_output --partial "pm.max_children = 5"
+  assert_output --partial "pm.start_servers = 1"
+  assert_output --partial "pm.max_requests = 500"
+}
+
+@test "php_pool_tier_block medium contains pm.max_children = 20" {
+  run -0 php_pool_tier_block "medium"
+  assert_output --partial "pm.max_children = 20"
+  assert_output --partial "pm.start_servers = 4"
+  assert_output --partial "pm.max_requests = 1000"
+}
+
+@test "php_pool_tier_block large contains pm.max_children = 50" {
+  run -0 php_pool_tier_block "large"
+  assert_output --partial "pm.max_children = 50"
+  assert_output --partial "pm.start_servers = 10"
+  assert_output --partial "pm.max_requests = 2000"
+}
+
+@test "php_pool_tier_block rejects unsupported tier" {
+  run -1 php_pool_tier_block "huge"
+}

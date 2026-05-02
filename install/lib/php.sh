@@ -24,6 +24,68 @@ validate_php_version() {
   return 1
 }
 
+# All FPM pool sizing tiers this installer knows about. Tier is a property of
+# the per-user+version pool, not the site -- multiple sites sharing the same
+# pool share the tier.
+SUPPORTED_POOL_TIERS=(small medium large)
+
+# validate_pool_tier TIER -- exits 0 if TIER is in SUPPORTED_POOL_TIERS,
+# 1 otherwise. Caller is responsible for any user-facing error message.
+validate_pool_tier() {
+  local t="${1:?validate_pool_tier: tier required}"
+  local s
+  for s in "${SUPPORTED_POOL_TIERS[@]}"; do
+    [ "${s}" = "${t}" ] && return 0
+  done
+  return 1
+}
+
+# php_pool_tier_block TIER -- echo the multi-line pm.* block for the requested
+# tier, ready to substitute into the pool template's __TIER_BLOCK__ placeholder.
+# All knobs are set together so a tier change re-tunes the whole pool.
+php_pool_tier_block() {
+  local t="${1:?tier required}"
+  case "${t}" in
+    small)
+      cat <<'EOF'
+pm = ondemand
+pm.max_children = 5
+pm.start_servers = 1
+pm.min_spare_servers = 1
+pm.max_spare_servers = 2
+pm.max_requests = 500
+pm.process_idle_timeout = 30s
+EOF
+      ;;
+    medium)
+      cat <<'EOF'
+pm = dynamic
+pm.max_children = 20
+pm.start_servers = 4
+pm.min_spare_servers = 2
+pm.max_spare_servers = 8
+pm.max_requests = 1000
+pm.process_idle_timeout = 30s
+EOF
+      ;;
+    large)
+      cat <<'EOF'
+pm = dynamic
+pm.max_children = 50
+pm.start_servers = 10
+pm.min_spare_servers = 5
+pm.max_spare_servers = 20
+pm.max_requests = 2000
+pm.process_idle_timeout = 30s
+EOF
+      ;;
+    *)
+      log_error "php: unsupported pool tier ${t} (allowed: ${SUPPORTED_POOL_TIERS[*]})"
+      return 1
+      ;;
+  esac
+}
+
 PHP_EXTENSIONS=(
   fpm cli common opcache mysql mbstring xml curl gd zip intl bcmath soap imagick redis
 )
