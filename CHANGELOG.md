@@ -6,6 +6,25 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-05-02
+
+Bugfix release. Two issues caught by the v0.4.0 acceptance run on real Ubuntu (`sg10.codetot.org`).
+
+### Fixed
+
+- **vhost template comment substitution bug** (commit `cbe1801`, ships as part of v0.4.0 history but documented here): `templates/apache/vhost.conf.tmpl` head comment block contained the literal placeholder strings `__HTTP_REDIRECT__` and `__HTTPS_BLOCK__`. Python's `str.replace()` substitutes inside `#`-comments, so with TLS active the multi-line HTTPS block dumped into a comment line broke the comment boundary and Apache's `apache2ctl configtest` failed (`</VirtualHost> without matching <VirtualHost>`). Net: every `--tls=letsencrypt` or `--tls=self-signed` site since v0.3.0 ships rendered an invalid vhost. Affects v0.3.0 through v0.4.0; fix landed before v0.4.0 published, so users only see this if they cherry-picked from a pre-`cbe1801` commit.
+- **`site-create.sh` DB password idempotency** (closes codetot-web/litesoup#9): `create_database` generated a fresh random password every run AND used `CREATE USER IF NOT EXISTS` which silently keeps the OLD password if the user exists. A site-create that aborted partway (e.g., apache configtest fail, network glitch on certbot) and was re-run wrote a NEW password to `wp-config.php` while MySQL kept the OLD password — WordPress returned 500 with `Error establishing a database connection`. Now: if `wp-config.php` already exists, reuse its password; either way, the SQL emits both `CREATE USER IF NOT EXISTS` AND `ALTER USER ... IDENTIFIED BY '<pw>'` so MySQL always matches `wp-config.php`. Self-healing on retry.
+
+### Added
+
+- 2 new bats tests in `unit_site_create.bats` covering the `create_database` SQL emit (`CREATE USER` + `ALTER USER` always present with the same password) and the wp-config.php password reuse parser.
+
+### Acknowledged false positive (closed)
+
+- codetot-web/litesoup#10 (pool template missing `log_errors`): the `php_admin_flag[log_errors] = on` line IS present in the template at line 22 and renders correctly. The reason `/home/<user>/.logs/php<v>-fpm.error.log` didn't exist on sg10 was that PHP had no fatal error to log — WordPress's 500 was an application-level HTML response. Issue closed.
+
+[0.4.1]: https://github.com/codetot-web/litesoup/releases/tag/v0.4.1
+
 ## [0.4.0] - 2026-05-02
 
 Plan I.C: `site-set-php` + per-tier FPM pool sizing. Closes the two pool-management gaps left after Plan I.B (multi-version PHP) — existing sites can now flip PHP version, and pools can be sized for actual workload. v0.3 callers keep working unchanged.

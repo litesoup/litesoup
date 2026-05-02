@@ -129,8 +129,34 @@ create_database() {
   #      the script keeps pipefail.
   #   3. Length check: defend against truncation; we want a real 24-char
   #      password, never a passwordless MariaDB user from a silent failure.
-  pw="$(set +o pipefail; LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom 2>/dev/null | head -c 24)"
-  [ "${#pw}" -eq 24 ] || { log_error "site-create: failed to generate 24-char DB password (got '${#pw}' chars)"; exit 1; }
+  # If wp-config.php from a prior site-create run already exists, reuse its DB
+  # password. This heals a half-installed site (e.g., a previous run aborted at
+  # apache configtest after the DB user was created -- a re-run with a fresh
+  # random pw would mismatch what MySQL stored, and `CREATE USER IF NOT EXISTS`
+  # silently keeps the OLD password). Otherwise generate a fresh 24-char pw.
+  # Caught on sg10.codetot.org acceptance, fixes codetot-web/litesoup#9.
+  # Path to the existing wp-config.php is overridable via env so bats tests can
+  # exercise the reuse branch end-to-end without writing to /home/...
+  local existing_wp_config="${LITESOUP_TEST_EXISTING_WP_CONFIG:-/home/${SITE_USER}/webapps/${DOMAIN}/wp-config.php}"
+  pw=""
+  if [ -f "${existing_wp_config}" ]; then
+    pw="$(awk -F"'" '/define\([[:space:]]*.DB_PASSWORD./{print $4; exit}' "${existing_wp_config}" 2>/dev/null || true)"
+    # Defense-in-depth: the parsed pw flows directly into the SQL heredoc below.
+    # If a hand-edited wp-config holds a quote/backslash/space/etc., the SQL
+    # breaks (or worse, injects). Restrict reuse to alphanumeric pws -- the
+    # set our own generator produces. Anything else falls through to fresh
+    # generation (and ALTER USER below resyncs MySQL to the new pw).
+    if [ -n "${pw}" ] && [ "${#pw}" -ge 16 ] && [[ "${pw}" =~ ^[A-Za-z0-9]+$ ]]; then
+      log_info "site-create: reusing existing wp-config DB password (${#pw} chars) for ${user}"
+    else
+      [ -n "${pw}" ] && log_warn "site-create: ignoring existing wp-config DB password (not alphanumeric or too short); generating fresh"
+      pw=""
+    fi
+  fi
+  if [ -z "${pw}" ]; then
+    pw="$(set +o pipefail; LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom 2>/dev/null | head -c 24)"
+    [ "${#pw}" -eq 24 ] || { log_error "site-create: failed to generate 24-char DB password (got '${#pw}' chars)"; exit 1; }
+  fi
 
   if [ "${DRY_RUN}" = "1" ]; then
     log_info "[DRYRUN] would create db ${db} and user ${user}"
@@ -138,9 +164,15 @@ create_database() {
     return 0
   fi
 
+  # CREATE USER IF NOT EXISTS doesn't update an existing user's password.
+  # ALTER USER does. Combining both is fully idempotent and self-healing:
+  # - first run creates + sets pw
+  # - re-run reuses the wp-config pw and re-asserts it on MySQL, healing any
+  #   drift left by a prior aborted run.
   mariadb_root <<SQL
 CREATE DATABASE IF NOT EXISTS \`${db}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE USER IF NOT EXISTS '${user}'@'localhost' IDENTIFIED BY '${pw}';
+ALTER USER '${user}'@'localhost' IDENTIFIED BY '${pw}';
 GRANT ALL PRIVILEGES ON \`${db}\`.* TO '${user}'@'localhost';
 FLUSH PRIVILEGES;
 SQL
