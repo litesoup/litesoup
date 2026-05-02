@@ -6,6 +6,43 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-02
+
+Plan I.C: `site-set-php` + per-tier FPM pool sizing. Closes the two pool-management gaps left after Plan I.B (multi-version PHP) — existing sites can now flip PHP version, and pools can be sized for actual workload. v0.3 callers keep working unchanged.
+
+### Added
+
+- `site/site-set-php.sh --domain=X --php=Y` operation: flip an existing site to a different PHP version. Looks up owner / docroot / TLS mode from the existing vhost, ensures the per-user pool exists for the new version (creates it if first site for owner+new-version), re-renders the vhost so the FPM SetHandler points at the new socket, runs apache reload. No DB / docroot / WP changes; TLS mode is preserved automatically (detected from the existing vhost).
+- `site/site-set-tier.sh --user=NAME --version=X.Y --tier=TIER` operation: retune the FPM pool for a user+version. Pool conf is re-rendered with the new tier's `pm.*` block and `php<v>-fpm` is reloaded. Idempotent: re-running with the current tier is a no-op.
+- `site-create.sh --tier=small|medium|large` flag: selects FPM pool sizing at site creation time. Default `small` (v0.3 back-compat).
+- `install/lib/php.sh` additions: `SUPPORTED_POOL_TIERS=(small medium large)`, `validate_pool_tier`, `php_pool_tier_block <tier>` helper that emits the `pm.*` block for the requested tier. `ensure_php_pool_for_user` gains an optional 3rd `tier` arg (default `small`).
+- New `_php_pool_current_tier` helper inspects an existing pool conf's `pm.max_children` to detect tier (5→small, 20→medium, 50→large). Used by `ensure_php_pool_for_user` to no-op same-tier re-runs.
+- New bats unit suites: `unit_site_set_php.bats` (6 tests), `unit_site_set_tier.bats` (6 tests). 7 new tier-related tests appended to `unit_php.bats`. 4 new `--tier=` tests appended to `unit_site_create.bats`. Total bats coverage: 51 → 77.
+- `test/acceptance-i-c-run.sh`: docker harness validates `--tier=medium` writes the right `pm.*` lines, `site-set-php` flips an existing site's PHP version (curl phpinfo confirms before + after), `site-set-tier --tier=large` retunes the pool, idempotency re-run is a no-op.
+
+### Changed
+
+- `templates/php/pool.conf.tmpl`: hardcoded `pm.*` lines replaced with `__TIER_BLOCK__` placeholder. The placeholder is filled by `php_pool_tier_block <tier>` at render time. v0.3 sites already on disk are untouched until the next `ensure_php_pool_for_user` call (which keeps tier=small if no third arg is passed — matches v0.3 semantics).
+- `ensure_php_pool_for_user` rendering switched from `sed` to `python3` (the multi-line `__TIER_BLOCK__` doesn't survive sed substitution). `python3` is in the install-stack baseline since Plan I.D pulled it in via `python3-certbot-apache`.
+- `php-fpm --test` stderr is now captured to a temp file and printed on failure (was previously silenced via `2>/dev/null`). Operators see the actual syntax error on the rare case of a malformed pool conf.
+
+### Tier reference
+
+| Tier | `pm` | `pm.max_children` | `pm.start_servers` | `pm.max_requests` |
+|------|------|------------------:|-------------------:|------------------:|
+| `small` (default) | `ondemand` | 5 | 1 | 500 |
+| `medium` | `dynamic` | 20 | 4 | 1000 |
+| `large` | `dynamic` | 50 | 10 | 2000 |
+
+### Known limitations (deferred)
+
+- Tier is per pool (per-user+version), not per site. Workaround: use `--user=NAME` to give a site its own system user.
+- No custom tier definitions — three presets only. Advanced users edit `php_pool_tier_block` in `install/lib/php.sh` directly.
+- `site-set-php` doesn't change tier; `site-set-tier` doesn't change PHP version. Run them separately if you need both.
+- Caching (Redis object cache, Apache FastCGI cache, Memcached) → Plan I.F.
+
+[0.4.0]: https://github.com/codetot-web/litesoup/releases/tag/v0.4.0
+
 ## [0.3.0] - 2026-05-02
 
 Plan I.D: TLS / Let's Encrypt. `site-create` and the new `site-set-tls` provision per-site HTTPS with auto-renewal. v0.2 callers (no `--tls=` flag) keep working unchanged.

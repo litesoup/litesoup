@@ -6,7 +6,9 @@ Litesoup is a one-line bash installer that turns a fresh Ubuntu 24.04 server int
 
 ## Status
 
-**v0.3 — Plan I.D landed (2026-05-02):** TLS / Let's Encrypt. `site-create --tls=letsencrypt --email=ADDR` provisions real LE certs via HTTP-01; `--tls=self-signed` for local/internal sites; auto-renewal via `certbot.timer`. Existing v0.2 sites can be flipped to HTTPS retroactively with `site-set-tls`. v0.2 callers (no `--tls=` flag) keep working unchanged.
+**v0.4 — Plan I.C landed (2026-05-02):** `site-set-php` flips PHP version on an existing site (TLS preserved); `--tier=small|medium|large` selects FPM pool sizing on `site-create` (default small, 5 workers); `site-set-tier` retunes a pool retroactively. v0.3 callers keep working via the `small` default.
+
+**v0.3 — Plan I.D (2026-05-02):** TLS / Let's Encrypt. `site-create --tls=letsencrypt --email=ADDR` provisions real LE certs via HTTP-01; `--tls=self-signed` for local/internal sites; auto-renewal via `certbot.timer`. Existing v0.2 sites can be flipped to HTTPS retroactively with `site-set-tls`. v0.2 callers (no `--tls=` flag) keep working unchanged.
 
 **v0.2 — Plan I.B (2026-05-02):** multi-version PHP. Install any subset of PHP 8.0–8.5 side-by-side; pick the version per site with `--php=X.Y`. v0.1.0 callers keep working via deprecated shims.
 
@@ -22,6 +24,31 @@ sudo bash site/site-create.sh --domain=blog.example.com --tls=letsencrypt --emai
 sudo bash site/site-create.sh --domain=alpha.test --tls=self-signed                             # HTTPS local/dev site
 sudo bash site/site-create.sh --domain=legacy.test --php=8.1                                    # HTTP-only (back-compat)
 curl -k -H 'Host: alpha.test' https://127.0.0.1/wp-admin/install.php
+```
+
+## FPM pool sizing + version flips (v0.4)
+
+`--tier=small|medium|large` on `site-create.sh` (or the `site-set-tier.sh` operation) selects FPM pool sizing for a per-user+version pool.
+
+| Tier | `pm` | `max_children` | `max_requests` | Use case |
+|------|------|---------------:|---------------:|----------|
+| `small` (default) | `ondemand` | 5 | 500 | Low-traffic sites, dev |
+| `medium` | `dynamic` | 20 | 1000 | Production sites |
+| `large` | `dynamic` | 50 | 2000 | High-traffic sites |
+
+**Tier is per pool, not per site.** A pool is identified by `<user>-php<version>`, so all sites for the same owner+PHP-version share the tier. If you need per-site sizing, use `--user=NAME` to give that site its own system user (and therefore its own pool).
+
+`site-set-php.sh --domain=DOMAIN --php=X.Y` flips an existing site to a different PHP version. TLS mode is preserved automatically (auto-detected from the existing vhost).
+
+```bash
+# Create a high-traffic production site with TLS
+sudo bash site/site-create.sh --domain=blog.example.com --tls=letsencrypt --email=ops@example.com --tier=large
+
+# Retune an existing pool (small -> medium)
+sudo bash site/site-set-tier.sh --user=litesoup --version=8.2 --tier=medium
+
+# Change PHP version of an existing site (TLS preserved)
+sudo bash site/site-set-php.sh --domain=blog.example.com --php=8.4
 ```
 
 ## TLS / HTTPS (v0.3)
@@ -107,8 +134,8 @@ To run a site under a different system user (e.g., per-client isolation), pass `
 
 ## What's deferred to later sub-plans
 
-- **Plan I.C** — `site-set-php` (change a live site's PHP version), per-tier pool sizing (small/medium/large `pm.max_children`), Redis + Memcached + per-site Apache FastCGI cache + Redis object cache auto-config
 - **Plan I.E** — `install-stack --remove-php=X.Y`, `ufw`, `fail2ban`, `unattended-upgrades`, OCSP stapling, broader hardening, distro-detection beyond Ubuntu 24.04, and Sigstore-signed releases
+- **Plan I.F** — Redis + Memcached + per-site Apache FastCGI cache + Redis object cache auto-config (split out of original I.C since caching is its own subsystem)
 - **Plan H** — bash-scripts reorganization into `audit/`, `harden/`, `tune/` directories
 - **Plans A / J / E** — VPS migration, two-tier dashboard, client tenant portal
 
