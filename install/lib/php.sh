@@ -87,8 +87,24 @@ EOF
   esac
 }
 
-PHP_EXTENSIONS=(
-  fpm cli common opcache mysql mbstring xml curl gd zip intl bcmath soap imagick redis
+# Extensions installed for every requested PHP version.
+#
+# CORE = required for the stack to function. install-stack.sh aborts if any
+#        of these are missing from the configured apt sources.
+# OPTIONAL = best-effort. Skipped with a log_warn when not resolvable. The
+#        two PECL extensions live here because the CloudPanel mirror
+#        fallback (see install/lib/apt.sh _ensure_repo_cloudpanel_php and
+#        issue #14) repackages only Sury's core PHP set; PECL builds like
+#        imagick + native redis client are NOT in that mirror. On networks
+#        where ppa.launchpadcontent.net IS reachable, both install fine
+#        from the real PPA. When skipped, WP Redis Object Cache falls back
+#        to the bundled Predis pure-PHP client (slower but functional);
+#        WP image processing falls back to GD (already in CORE).
+PHP_EXTENSIONS_CORE=(
+  fpm cli common opcache mysql mbstring xml curl gd zip intl bcmath soap
+)
+PHP_EXTENSIONS_OPTIONAL=(
+  imagick redis
 )
 
 # Resolve the litesoup repo root (works whether sourced from install-stack.sh or
@@ -109,11 +125,16 @@ ensure_php_fpm() {
   ensure_ppa "ppa:ondrej/php" "/etc/apt/sources.list.d/ondrej-ubuntu-php-noble.sources" \
     || { log_error "php: cannot install ${v} without ondrej PPA"; return 1; }
 
-  local pkgs=() ext
-  for ext in "${PHP_EXTENSIONS[@]}"; do
-    pkgs+=("php${v}-${ext}")
+  local core_pkgs=() opt_pkgs=() ext
+  for ext in "${PHP_EXTENSIONS_CORE[@]}"; do
+    core_pkgs+=("php${v}-${ext}")
   done
-  ensure_pkgs "${pkgs[@]}"
+  ensure_pkgs "${core_pkgs[@]}"
+
+  for ext in "${PHP_EXTENSIONS_OPTIONAL[@]}"; do
+    opt_pkgs+=("php${v}-${ext}")
+  done
+  ensure_pkgs_optional "${opt_pkgs[@]}"
 
   # Default `php` CLI -> PHP_VERSION_DEFAULT (only set when installing it).
   if [ "${v}" = "${PHP_VERSION_DEFAULT}" ] && command -v update-alternatives >/dev/null 2>&1; then

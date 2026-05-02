@@ -218,6 +218,12 @@ _wp_set_constant_if_unset() {
 # Inject cache-related constants into wp-config.php:
 #   WP_CACHE_KEY_SALT  -- random per site; prevents cross-tenant Redis key
 #                         collisions when multiple sites share one Redis.
+#                         NOTE: wp-cli 2.12+ generates this constant natively
+#                         in `wp config create` using the full WP secret-key
+#                         alphabet (higher entropy than our 64-char hex). The
+#                         `wp config has` guard below correctly defers when
+#                         that's the case; our path is the fallback for older
+#                         wp-cli releases.
 #   WP_REDIS_HOST/PORT/PASSWORD/DATABASE -- so plugins like Redis Object Cache
 #                         work the moment the user runs `wp plugin install
 #                         redis-cache --activate && wp redis enable`.

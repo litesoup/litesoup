@@ -38,6 +38,41 @@ ensure_pkgs() {
   apt_install "${missing[@]}"
 }
 
+# ensure_pkgs_optional PKG [PKG …] -- best-effort install. Packages not
+# resolvable in any configured repo are logged as warnings and skipped
+# (instead of failing the whole apt-get install). Use for extensions that
+# are nice-to-have but not required for the stack to function -- e.g.
+# php8.X-imagick / php8.X-redis when we're running off the CloudPanel
+# mirror, which doesn't carry PECL extensions. apt_update_once is invoked
+# so the apt-cache lookup sees fresh metadata.
+ensure_pkgs_optional() {
+  apt_update_once
+  local -a available=() missing=()
+  local pkg
+  for pkg in "$@"; do
+    if is_pkg_installed "${pkg}"; then continue; fi
+    # `apt-cache show` returns 0 even for packages that are only referenced
+    # as a dep name in another package's metadata (no actual installable
+    # version). `apt-cache policy` returns "Candidate: (none)" in that case
+    # AND for genuinely-missing packages -- so absence of "Candidate: (none)"
+    # is the reliable installable check.
+    if apt-cache policy "${pkg}" 2>/dev/null | grep -q 'Candidate: (none)'; then
+      missing+=("${pkg}")
+    elif apt-cache policy "${pkg}" 2>/dev/null | grep -qE '^[[:space:]]+Candidate:'; then
+      available+=("${pkg}")
+    else
+      missing+=("${pkg}")
+    fi
+  done
+  if [ "${#missing[@]}" -gt 0 ]; then
+    log_warn "apt: optional packages not available in configured repos, skipping: ${missing[*]}"
+  fi
+  if [ "${#available[@]}" -gt 0 ]; then
+    log_info "apt: installing optional packages: ${available[*]}"
+    apt_install "${available[@]}"
+  fi
+}
+
 ensure_ppa() {
   local ppa="$1"   # e.g. ppa:ondrej/php
   local probe="$2" # e.g. /etc/apt/sources.list.d/ondrej-ubuntu-php-noble.sources
@@ -127,13 +162,19 @@ _ppa_reachable_or_fallback() {
 }
 
 # Per-PPA mirror dispatcher. Currently only ondrej/php has a mirror fallback
-# (packages.sury.org -- Ondrej's own CDN-fronted mirror serving the same
-# packages as the launchpad PPA). Add new cases here as more PPAs need
-# mirror coverage.
+# (packages.cloudpanel.io -- CloudPanel CE's CloudFront-backed mirror serving
+# repackaged Sury PHP debs for Ubuntu noble/jammy + Debian). Add new cases
+# here as more PPAs need mirror coverage.
+#
+# NOTE on sury.org: an earlier iteration of this fallback targeted
+# packages.sury.org/php. That mirror only publishes Debian suites
+# (bookworm, bullseye, trixie, resolute) -- it does NOT serve Ubuntu suites,
+# verified by HEAD on /dists/noble/InRelease (Varnish returns 418). Do not
+# resurrect sury.org as the Ubuntu fallback.
 _ppa_fallback() {
   local ppa="$1" probe="$2"
   case "${ppa}" in
-    ppa:ondrej/php) _ensure_repo_sury_php "${probe}" ;;
+    ppa:ondrej/php) _ensure_repo_cloudpanel_php "${probe}" ;;
     *)
       log_error "apt: no mirror fallback configured for ${ppa}"
       return 1
@@ -142,59 +183,95 @@ _ppa_fallback() {
 }
 
 # Replace a launchpad-style ondrej/php sources file with the equivalent
-# packages.sury.org entry. Same packages, same versions; sury.org is
-# Ondrej's CDN-fronted mirror that reaches networks where
-# ppa.launchpadcontent.net is blocked or rate-limited (CI runners, DO
-# Singapore, etc.). Sury's signing key is distinct from the launchpad PPA
-# key (fpr 15058500A0235D97F5D10063B188E2B695BD4743) and ships at the
-# stable URL https://packages.sury.org/php/apt.gpg.
-_ensure_repo_sury_php() {
+# packages.cloudpanel.io entry. CloudPanel CE operates a CloudFront-backed
+# apt mirror that repackages Sury's PHP builds for Ubuntu noble/jammy and
+# Debian bookworm/bullseye/trixie. Packages are byte-equivalent to upstream
+# Ondrej except for a +clp version suffix; service names, paths, and
+# extension lists are identical, so php.sh / install-stack.sh need no
+# changes.
+#
+# Tradeoffs (this is a temporary measure -- see issue #14):
+#   + reachable from networks where ppa.launchpadcontent.net is blocked
+#     (CI runners, DO Singapore, etc.)
+#   + same package names, same install flow downstream
+#   - third-party dependency we don't control; CloudPanel could change
+#     URLs, key, or yank the mirror at any time. Pin the expected GPG
+#     fingerprint so silent key rotation fails loudly.
+#   - long-term posture is to self-host an aptly mirror of ppa:ondrej/php
+#     and remove this fallback entirely.
+_ensure_repo_cloudpanel_php() {
   local probe="$1"
 
   if [ "${DRY_RUN}" = "1" ]; then
-    log_info "[DRYRUN] would swap ${probe} to packages.sury.org/php"
+    log_info "[DRYRUN] would swap ${probe} to packages.cloudpanel.io"
     return 0
   fi
 
-  local keyring="/usr/share/keyrings/sury-php.gpg"
-  local fpr="15058500A0235D97F5D10063B188E2B695BD4743"
-
-  # Prefer the canonical key URL on packages.sury.org (Sury's documented
-  # install path). Fall back to keyserver only if curl is unavailable or
-  # sury.org is unreachable too.
-  if command -v curl >/dev/null 2>&1 \
-     && curl -fsSL --max-time 15 https://packages.sury.org/php/apt.gpg \
-              -o "${keyring}" 2>/dev/null \
-     && gpg --no-default-keyring --keyring "${keyring}" --list-keys "${fpr}" >/dev/null 2>&1; then
-    log_info "apt: imported sury.org signing key from packages.sury.org"
-  else
-    log_warn "apt: direct sury.org key fetch failed, trying keyserver"
-    if ! gpg --batch --no-tty --keyserver keyserver.ubuntu.com --recv-keys "${fpr}" 2>/dev/null; then
-      gpg --batch --no-tty --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys "${fpr}" \
-        || { log_error "apt: failed to import sury.org signing key ${fpr}"; return 1; }
-    fi
-    if ! gpg --list-keys "${fpr}" >/dev/null 2>&1; then
-      log_error "apt: sury.org key import succeeded but key not found: ${fpr}"
+  # CloudPanel ships separate amd64 and arm64 CloudFront origins (signed by
+  # the same key, identical package contents per arch).
+  local arch origin
+  arch="$(dpkg --print-architecture 2>/dev/null || echo amd64)"
+  case "${arch}" in
+    amd64) origin="d17k9fuiwb52nc.cloudfront.net" ;;
+    arm64) origin="d2xpdm4jldf31f.cloudfront.net" ;;
+    *)
+      log_error "apt: cloudpanel mirror has no origin for arch '${arch}' (only amd64/arm64 supported)"
       return 1
-    fi
-    gpg --export --armor "${fpr}" | gpg --dearmor -o "${keyring}"
+      ;;
+  esac
+
+  local keyring="/usr/share/keyrings/cloudpanel-php.gpg"
+  local fpr="4FFD41A7CB8F2CEA5F75E6CC1FD0B9CFEFC59AC9"
+  local key_url="https://${origin}/key.gpg"
+  local key_tmp
+  key_tmp="$(mktemp /tmp/litesoup-clp-key.XXXXXX.asc)"
+  # shellcheck disable=SC2064
+  trap "rm -f '${key_tmp}'" RETURN
+
+  if ! command -v curl >/dev/null 2>&1; then
+    ensure_pkgs curl
   fi
+
+  if ! curl -fsSL --max-time 30 "${key_url}" -o "${key_tmp}"; then
+    log_error "apt: failed to fetch CloudPanel key from ${key_url}"
+    return 1
+  fi
+
+  # Pin the fingerprint -- if CloudPanel rotates their key without warning,
+  # we want to fail loudly instead of silently trusting a new signer.
+  local got_fpr
+  got_fpr="$(gpg --no-default-keyring --keyring /tmp/litesoup-clp-keyring.kbx \
+                  --with-colons --import-options show-only --import "${key_tmp}" 2>/dev/null \
+              | awk -F: '/^fpr:/ {print $10; exit}')"
+  rm -f /tmp/litesoup-clp-keyring.kbx /tmp/litesoup-clp-keyring.kbx~ 2>/dev/null || true
+  if [ "${got_fpr}" != "${fpr}" ]; then
+    log_error "apt: CloudPanel key fingerprint mismatch (got '${got_fpr}', want '${fpr}')"
+    log_error "apt: this may indicate a key rotation -- audit before extending trust"
+    return 1
+  fi
+
+  gpg --dearmor < "${key_tmp}" > "${keyring}"
+  chmod 0644 "${keyring}"
 
   local codename
   codename="$( . /etc/os-release && echo "${VERSION_CODENAME:-noble}" )"
+  # CloudPanel publishes one component per PHP version. List all of the
+  # versions we support (SUPPORTED_PHP_VERSIONS in php.sh) so any
+  # subsequent --php-versions= choice resolves.
   cat > "${probe}" <<EOF
-# Managed by litesoup install/lib/apt.sh -- sury.org fallback for ondrej/php.
-# Same packages and versions, served from a CDN reachable when launchpad is not.
+# Managed by litesoup install/lib/apt.sh -- cloudpanel.io mirror for ondrej/php.
+# Same packages and versions as ppa:ondrej/php, served from a CloudFront CDN
+# that's reachable when ppa.launchpadcontent.net is not. See issue #14.
 Types: deb
-URIs: https://packages.sury.org/php/
+URIs: https://${origin}/
 Suites: ${codename}
-Components: main
+Components: main php-8.0 php-8.1 php-8.2 php-8.3 php-8.4 php-8.5
 Signed-By: ${keyring}
 EOF
-  log_info "apt: swapped ${probe} to packages.sury.org/php (suite=${codename})"
+  log_info "apt: swapped ${probe} to ${origin} (suite=${codename}, arch=${arch})"
 
   if ! run_or_dryrun env DEBIAN_FRONTEND=noninteractive apt-get update -qq; then
-    log_error "apt: apt-get update failed after swapping to sury.org"
+    log_error "apt: apt-get update failed after swapping to cloudpanel.io"
     return 1
   fi
   _APT_UPDATED=1

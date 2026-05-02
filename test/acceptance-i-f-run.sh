@@ -105,12 +105,14 @@ docker exec "${CTR}" bash -lc '
   WP2=/home/litesoup/webapps/beta-cache.test
   salt1="$(sudo -H -u litesoup wp --path="${WP1}" config get WP_CACHE_KEY_SALT --type=constant)"
   salt2="$(sudo -H -u litesoup wp --path="${WP2}" config get WP_CACHE_KEY_SALT --type=constant)"
-  echo "  alpha salt: ${salt1}"
-  echo "  beta  salt: ${salt2}"
-  [[ "${salt1}" =~ ^[0-9a-f]{64}$ ]] || { echo "FAIL: alpha salt bad shape"; exit 1; }
-  [[ "${salt2}" =~ ^[0-9a-f]{64}$ ]] || { echo "FAIL: beta salt bad shape"; exit 1; }
-  [ "${salt1}" != "${salt2}" ]       || { echo "FAIL: salts collided"; exit 1; }
-  echo "  per-site salts distinct + 64-char hex OK"
+  echo "  alpha salt: ${salt1:0:8}... (${#salt1} chars)"
+  echo "  beta  salt: ${salt2:0:8}... (${#salt2} chars)"
+  # wp-cli 2.12+ generates WP_CACHE_KEY_SALT itself (full WP secret-key alphabet);
+  # older wp-cli falls back to site-create.sh's 64-char hex injection. Accept either.
+  [ -n "${salt1}" ] && [ "${#salt1}" -ge 32 ] || { echo "FAIL: alpha salt empty/short"; exit 1; }
+  [ -n "${salt2}" ] && [ "${#salt2}" -ge 32 ] || { echo "FAIL: beta salt empty/short"; exit 1; }
+  [ "${salt1}" != "${salt2}" ]                || { echo "FAIL: salts collided"; exit 1; }
+  echo "  per-site salts distinct + length>=32 OK"
 
   for k in WP_REDIS_HOST WP_REDIS_PORT WP_REDIS_PASSWORD WP_REDIS_DATABASE; do
     v="$(sudo -H -u litesoup wp --path="${WP1}" config get "${k}" --type=constant)"
