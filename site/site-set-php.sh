@@ -104,18 +104,33 @@ main() {
   local old_php
   old_php="$(existing_site_php "${DOMAIN}")"
 
-  log_info "site-set-php: ${DOMAIN} (owner=${SITE_USER}, ${old_php} -> ${PHP_VERSION}, tls=${TLS_MODE})"
+  # Detect the tier of the OLD pool so we forward it to the new-version pool.
+  # Without this, every site-set-php silently downgrades the new pool to small
+  # (the default), losing any operator-set medium/large sizing on the old pool.
+  local old_pool_conf="/etc/php/${old_php}/fpm/pool.d/${SITE_USER}-php${old_php}.conf"
+  local tier="small"
+  if [ -f "${old_pool_conf}" ]; then
+    local detected
+    detected="$(_php_pool_current_tier "${old_pool_conf}")"
+    case "${detected}" in
+      small|medium|large) tier="${detected}" ;;
+      *) tier="small" ;;
+    esac
+  fi
+
+  log_info "site-set-php: ${DOMAIN} (owner=${SITE_USER}, ${old_php} -> ${PHP_VERSION}, tier=${tier}, tls=${TLS_MODE})"
 
   if [ "${old_php}" = "${PHP_VERSION}" ]; then
     log_info "site-set-php: site is already on PHP ${PHP_VERSION} -- nothing to do"
     exit 0
   fi
 
-  ensure_php_pool_for_user "${SITE_USER}" "${PHP_VERSION}" \
+  ensure_php_pool_for_user "${SITE_USER}" "${PHP_VERSION}" "${tier}" \
     || { log_error "site-set-php: failed to ensure pool for ${SITE_USER}/${PHP_VERSION}"; exit 1; }
 
   write_vhost
-  log_info "site-set-php: ${DOMAIN} now serving PHP ${PHP_VERSION}"
+  log_info "site-set-php: ${DOMAIN} now serving PHP ${PHP_VERSION} (tier ${tier} carried over from PHP ${old_php} pool)"
+  log_info "site-set-php: NOTE old pool ${SITE_USER}-php${old_php} is no longer wired to this site; if no other sites use it, run \`site-set-tier --user=${SITE_USER} --version=${old_php} --tier=small\` to shrink it, or leave it for sites that may still need it"
 }
 
 main "$@"

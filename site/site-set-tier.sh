@@ -60,6 +60,13 @@ parse_args() {
   [ -n "${USER_NAME}" ]   || { log_error "--user is required";    usage; exit 64; }
   [ -n "${PHP_VERSION}" ] || { log_error "--version is required"; usage; exit 64; }
   [ -n "${POOL_TIER}" ]   || { log_error "--tier is required";    usage; exit 64; }
+  # Same regex as site-create.sh -- protects the python3 render in
+  # ensure_php_pool_for_user from triple-quote injection via crafted usernames.
+  if ! [[ "${USER_NAME}" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then
+    log_error "invalid user name: ${USER_NAME}"; exit 64
+  fi
+  validate_php_version "${PHP_VERSION}" \
+    || { log_error "unsupported PHP version: ${PHP_VERSION} (allowed: ${SUPPORTED_PHP_VERSIONS[*]})"; exit 64; }
   case "${POOL_TIER}" in
     small|medium|large) ;;
     *) log_error "--tier must be one of: small, medium, large (got '${POOL_TIER}')"; exit 64 ;;

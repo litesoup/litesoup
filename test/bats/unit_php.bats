@@ -102,25 +102,40 @@ setup() {
   run -1 validate_pool_tier "garbage"
 }
 
-@test "php_pool_tier_block small contains pm.max_children = 5" {
+@test "php_pool_tier_block small uses ondemand-only directives" {
   run -0 php_pool_tier_block "small"
+  assert_output --partial "pm = ondemand"
   assert_output --partial "pm.max_children = 5"
-  assert_output --partial "pm.start_servers = 1"
   assert_output --partial "pm.max_requests = 500"
+  assert_output --partial "pm.process_idle_timeout = 30s"
+  # ondemand rejects start/spare-server tunables -- their presence makes
+  # `php-fpm --test` reject the rendered pool conf.
+  refute_output --partial "pm.start_servers"
+  refute_output --partial "pm.min_spare_servers"
+  refute_output --partial "pm.max_spare_servers"
 }
 
-@test "php_pool_tier_block medium contains pm.max_children = 20" {
+@test "php_pool_tier_block medium uses dynamic with proper sizing" {
   run -0 php_pool_tier_block "medium"
+  assert_output --partial "pm = dynamic"
   assert_output --partial "pm.max_children = 20"
   assert_output --partial "pm.start_servers = 4"
+  assert_output --partial "pm.min_spare_servers = 2"
+  assert_output --partial "pm.max_spare_servers = 8"
   assert_output --partial "pm.max_requests = 1000"
+  # process_idle_timeout is ondemand-only; not meaningful under dynamic.
+  refute_output --partial "process_idle_timeout"
 }
 
-@test "php_pool_tier_block large contains pm.max_children = 50" {
+@test "php_pool_tier_block large uses dynamic with high sizing" {
   run -0 php_pool_tier_block "large"
+  assert_output --partial "pm = dynamic"
   assert_output --partial "pm.max_children = 50"
   assert_output --partial "pm.start_servers = 10"
+  assert_output --partial "pm.min_spare_servers = 5"
+  assert_output --partial "pm.max_spare_servers = 20"
   assert_output --partial "pm.max_requests = 2000"
+  refute_output --partial "process_idle_timeout"
 }
 
 @test "php_pool_tier_block rejects unsupported tier" {

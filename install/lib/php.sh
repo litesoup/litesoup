@@ -47,17 +47,20 @@ php_pool_tier_block() {
   local t="${1:?tier required}"
   case "${t}" in
     small)
+      # ondemand only honors max_children + max_requests + process_idle_timeout.
+      # start_servers / min_spare_servers / max_spare_servers are dynamic-only;
+      # including them under ondemand makes `php-fpm --test` reject the pool
+      # config (caught by Plan I.C ship adversarial review).
       cat <<'EOF'
 pm = ondemand
 pm.max_children = 5
-pm.start_servers = 1
-pm.min_spare_servers = 1
-pm.max_spare_servers = 2
 pm.max_requests = 500
 pm.process_idle_timeout = 30s
 EOF
       ;;
     medium)
+      # dynamic ignores process_idle_timeout — drop it so the rendered conf
+      # doesn't carry dead directives that confuse operators reading it.
       cat <<'EOF'
 pm = dynamic
 pm.max_children = 20
@@ -65,7 +68,6 @@ pm.start_servers = 4
 pm.min_spare_servers = 2
 pm.max_spare_servers = 8
 pm.max_requests = 1000
-pm.process_idle_timeout = 30s
 EOF
       ;;
     large)
@@ -76,7 +78,6 @@ pm.start_servers = 10
 pm.min_spare_servers = 5
 pm.max_spare_servers = 20
 pm.max_requests = 2000
-pm.process_idle_timeout = 30s
 EOF
       ;;
     *)
