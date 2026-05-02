@@ -6,7 +6,9 @@ Litesoup is a one-line bash installer that turns a fresh Ubuntu 24.04 server int
 
 ## Status
 
-**v0.2 — Plan I.B landed (2026-05-02):** multi-version PHP. Install any subset of PHP 8.0–8.5 side-by-side; pick the version per site with `--php=X.Y`. v0.1.0 callers keep working via deprecated shims.
+**v0.3 — Plan I.D landed (2026-05-02):** TLS / Let's Encrypt. `site-create --tls=letsencrypt --email=ADDR` provisions real LE certs via HTTP-01; `--tls=self-signed` for local/internal sites; auto-renewal via `certbot.timer`. Existing v0.2 sites can be flipped to HTTPS retroactively with `site-set-tls`. v0.2 callers (no `--tls=` flag) keep working unchanged.
+
+**v0.2 — Plan I.B (2026-05-02):** multi-version PHP. Install any subset of PHP 8.0–8.5 side-by-side; pick the version per site with `--php=X.Y`. v0.1.0 callers keep working via deprecated shims.
 
 **v0.1 — Plan I.A (2026-05-01):** initial MVP WordPress stack installer.
 
@@ -15,10 +17,43 @@ Litesoup is a one-line bash installer that turns a fresh Ubuntu 24.04 server int
 ```bash
 git clone https://github.com/codetot-web/litesoup.git
 cd litesoup
-sudo bash install/install-stack.sh                                  # default: PHP 8.2 + 8.3 + 8.4
-sudo bash site/site-create.sh --domain=example.test                 # default site → PHP 8.2
-sudo bash site/site-create.sh --domain=legacy.test --php=8.1        # legacy site → PHP 8.1 (must be installed)
-curl -H 'Host: example.test' http://127.0.0.1/wp-admin/install.php
+sudo bash install/install-stack.sh                                                              # PHP 8.2 + 8.3 + 8.4 + certbot
+sudo bash site/site-create.sh --domain=blog.example.com --tls=letsencrypt --email=ops@example.com  # HTTPS public site
+sudo bash site/site-create.sh --domain=alpha.test --tls=self-signed                             # HTTPS local/dev site
+sudo bash site/site-create.sh --domain=legacy.test --php=8.1                                    # HTTP-only (back-compat)
+curl -k -H 'Host: alpha.test' https://127.0.0.1/wp-admin/install.php
+```
+
+## TLS / HTTPS (v0.3)
+
+`site-create.sh --domain=DOMAIN --tls=MODE [--email=ADDR]` provisions HTTPS during site creation.
+
+- `--tls=letsencrypt` (requires `--email=ADDR`): real Let's Encrypt cert via HTTP-01 challenge. Auto-renewed by `certbot.timer` (enabled by `install-stack`).
+- `--tls=self-signed`: openssl-generated 4096-bit RSA cert at `/etc/litesoup/ssl/<domain>/`. Use for local / internal / `.test` / `.local` domains.
+- `--tls=none` (default): HTTP only, v0.2 behavior.
+
+When TLS is active, the vhost includes:
+
+- HTTPS on port 443 with HTTP/2 (`Protocols h2 http/1.1`)
+- TLSv1.2 + TLSv1.3 only, ECDHE-only ciphers
+- HSTS (`max-age=31536000; includeSubDomains`)
+- HTTP→HTTPS 301 redirect on port 80 (with `/.well-known/acme-challenge/` exception so renewal works)
+- `Secure` flag added to all `Set-Cookie` headers
+
+`site-set-tls.sh --domain=DOMAIN --tls=MODE [--email=ADDR]` retroactively sets TLS on an existing v0.2 (or `--tls=none`) site. Same flag set as `site-create`'s TLS subset.
+
+```bash
+# Public site with real LE cert
+sudo bash site/site-create.sh --domain=blog.example.com --tls=letsencrypt --email=ops@example.com
+
+# Local dev site, self-signed
+sudo bash site/site-create.sh --domain=alpha.test --tls=self-signed
+
+# Upgrade an existing HTTP-only site to LE
+sudo bash site/site-set-tls.sh --domain=oldsite.example.com --tls=letsencrypt --email=ops@example.com
+
+# Force-renew a cert (manual; certbot.timer handles auto-renewal)
+sudo certbot renew --cert-name blog.example.com --force-renewal
 ```
 
 ## Multi-version PHP (v0.2)
@@ -73,7 +108,7 @@ To run a site under a different system user (e.g., per-client isolation), pass `
 ## What's deferred to later sub-plans
 
 - **Plan I.C** — `site-set-php` (change a live site's PHP version), per-tier pool sizing (small/medium/large `pm.max_children`), Redis + Memcached + per-site Apache FastCGI cache + Redis object cache auto-config
-- **Plan I.D** — `install-stack --remove-php=X.Y`, `ufw`, `fail2ban`, `unattended-upgrades`, certbot/TLS, broader hardening, distro-detection beyond Ubuntu 24.04, and Sigstore-signed releases
+- **Plan I.E** — `install-stack --remove-php=X.Y`, `ufw`, `fail2ban`, `unattended-upgrades`, OCSP stapling, broader hardening, distro-detection beyond Ubuntu 24.04, and Sigstore-signed releases
 - **Plan H** — bash-scripts reorganization into `audit/`, `harden/`, `tune/` directories
 - **Plans A / J / E** — VPS migration, two-tier dashboard, client tenant portal
 
@@ -97,7 +132,7 @@ Requires Docker Desktop / OrbStack / colima (any Docker Engine that supports `--
 
 - Ubuntu 24.04 LTS (x86_64) — strict in v1
 - Root or sudo access
-- A domain pointing at the server (only needed once Plan I.D adds TLS; HTTP works today)
+- A domain pointing at the server (required for `--tls=letsencrypt`; HTTP-only and `--tls=self-signed` work without public DNS)
 
 ## License
 

@@ -18,7 +18,7 @@ ensure_apache() {
 
   # Modules required for PHP-FPM, rewrite, headers, SSL, status
   local mod
-  for mod in proxy proxy_fcgi rewrite headers ssl setenvif expires; do
+  for mod in proxy proxy_fcgi rewrite headers ssl http2 setenvif expires; do
     run_or_dryrun a2enmod "${mod}"
   done
 
