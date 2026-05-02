@@ -16,6 +16,8 @@ source "${REPO_ROOT}/install/lib/common.sh"
 source "${REPO_ROOT}/install/lib/users.sh"
 # shellcheck source=../install/lib/mariadb.sh
 source "${REPO_ROOT}/install/lib/mariadb.sh"
+# shellcheck source=../install/lib/certbot.sh
+source "${REPO_ROOT}/install/lib/certbot.sh"
 
 DOMAIN=""
 SITE_USER="${DEFAULT_SITE_USER}"
@@ -66,6 +68,10 @@ main() {
   fi
   [ -f "${vhost}" ]   && run_or_dryrun rm -f "${vhost}"
   [ -d "${docroot}" ] && run_or_dryrun rm -rf "${docroot}"
+  # Best-effort cert revoke + cleanup. Safe on sites that never had TLS
+  # (certbot_revoke is a no-op when /etc/letsencrypt/live/<domain> is absent
+  # and just rm -rf's the empty self-signed dir).
+  certbot_revoke "${DOMAIN}"
   run_or_dryrun systemctl reload apache2
 
   if [ "${PURGE_DB}" = "1" ]; then
