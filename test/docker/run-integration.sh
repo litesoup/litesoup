@@ -64,13 +64,25 @@ fi
 docker exec "${NAME}" mkdir -p /opt/litesoup
 docker cp "${REPO_ROOT}/." "${NAME}:/opt/litesoup/"
 
+# Propagate selected LITESOUP_* env vars from the host (CI workflow) into
+# the container so install/lib/apt.sh sees them. Currently only
+# LITESOUP_PPA_FORCE_MIRROR is honored -- it's the env-var fast path that
+# skips the slow launchpad attempt on CI runners.
+DOCKER_ENV_ARGS=()
+# shellcheck disable=SC2043  # loop is intentional shape for future env-var additions
+for _var in LITESOUP_PPA_FORCE_MIRROR; do
+  if [ -n "${!_var-}" ]; then
+    DOCKER_ENV_ARGS+=(-e "${_var}=${!_var}")
+  fi
+done
+
 # Execute each integration script inside the SAME container in order. Stop
 # at the first failure so a broken stage doesn't mask later regressions
 # behind cascading failures.
 EXIT=0
 for SCRIPT in "$@"; do
   echo "=== ${SCRIPT} ==="
-  if ! docker exec -w /opt/litesoup "${NAME}" bash "test/integration/${SCRIPT}"; then
+  if ! docker exec "${DOCKER_ENV_ARGS[@]}" -w /opt/litesoup "${NAME}" bash "test/integration/${SCRIPT}"; then
     EXIT=$?
     echo "=== FAILED in ${SCRIPT} (exit ${EXIT}) ==="
     break

@@ -46,6 +46,13 @@ jobs:
   # SCRIPT ===" / "=== FAILED in SCRIPT ===" markers.
   integration:
     runs-on: ubuntu-24.04
+    # GitHub Actions runners can't reach ppa.launchpadcontent.net reliably.
+    # Skip the slow add-apt-repository attempt (60-120s wait) and go straight
+    # to the CloudPanel mirror via install/lib/apt.sh's fast path. Saves ~1-2
+    # min per CI run. install/lib/apt.sh recognizes this env var and bypasses
+    # `add-apt-repository ppa:ondrej/php` entirely.
+    env:
+      LITESOUP_PPA_FORCE_MIRROR: cloudpanel
     steps:
       - uses: actions/checkout@v4
         with: { submodules: recursive }
