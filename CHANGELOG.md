@@ -6,6 +6,86 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-05-03
+
+Hot-fix release. v0.7.0's `harden/harden-ssh.sh` defaults were too aggressive
+for litesoup's typical deployment pattern (operators SSH as root, some hosts
+allow password auth intentionally). v0.7.1 makes both `PasswordAuthentication
+no` and `PermitRootLogin no` opt-in via flags. Closes
+codetot-web/litesoup#20.
+
+### ⚠️ v0.7.0 → v0.7.1 behavior change (deliberate)
+
+If you ran v0.7.0's `install-stack.sh` and want to KEEP the v0.7.0 hardened
+posture (key-only SSH, no root login), pass the explicit flags now:
+
+```bash
+sudo bash harden/harden-ssh.sh --no-password-auth --no-root-login
+```
+
+Otherwise: re-running `install-stack.sh` (or `harden/harden-ssh.sh` standalone)
+under v0.7.1 will REWRITE `/etc/ssh/sshd_config.d/52-litesoup-harden.conf`
+with the gentler default — which means **password SSH and root SSH that you
+previously disabled will be re-enabled** (subject to whatever the lower-numbered
+sshd_config.d/ files say). This is intentional: the v0.7.0 default broke a
+real workflow (couldn't run install-stack on `sg10.codetot.org` because it
+would have locked the operator out). If your security posture depends on the
+stricter setting, pass the opt-in flags every time.
+
+### Fixed
+
+- **`harden-ssh.sh` default no longer disables `PasswordAuthentication`**
+  (was forced off in v0.7.0). Operators who bootstrap with password SSH or
+  who run install-stack on hosts that lack pre-installed SSH keys are no
+  longer locked out by the install. The directive is still available as
+  opt-in via `--no-password-auth`.
+
+- **`harden-ssh.sh` default no longer disables `PermitRootLogin`** (was
+  forced `no` in v0.7.0). Many litesoup deployments run `install-stack.sh`
+  AS root over SSH; v0.7.0's default would have terminated that workflow
+  on next session. The directive is still available as opt-in via
+  `--no-root-login`.
+
+- **Always-safe defaults still applied** (no change from v0.7.0): `MaxAuthTries
+  3`, `ClientAliveInterval 300`, `ClientAliveCountMax 2`, `X11Forwarding no`,
+  `AllowAgentForwarding no`, `PermitEmptyPasswords no`. These don't depend on
+  policy choices and are universally safer.
+
+### Added
+
+- `--no-password-auth` flag on `harden-ssh.sh` — adds `PasswordAuthentication
+  no` to the managed override.
+- `--no-root-login` flag on `harden-ssh.sh` — adds `PermitRootLogin no` to
+  the managed override.
+- 5 new bats regression tests in `test/bats/unit_harden.bats`:
+  - Default heredoc must NOT contain `PermitRootLogin no` (guards against
+    a future regression that re-introduces v0.7.0's behavior)
+  - Default heredoc must NOT contain `PasswordAuthentication no`
+  - `--help` documents `--no-password-auth`
+  - `--help` documents `--no-root-login`
+  - All 6 always-safe defaults are still in the heredoc (guards against
+    over-removal during this hot-fix)
+- Total bats unit tests: 116 → **121**.
+
+### Changed
+
+- `harden-ssh.sh` `usage()` text — now lists "Always-applied defaults"
+  separately from "Opt-in extras" so operators can see at a glance what
+  changes vs what stays.
+- Documentation in script header points operators who want stricter policy
+  to write a higher-numbered file (e.g. `99-local-strict.conf`) themselves.
+
+### Notes
+
+- v0.7.0 release/tag stays in place but is effectively superseded.
+  v0.7.1 release notes call out the behavior change explicitly.
+- `harden-apache.sh` and `harden-php.sh` defaults are unchanged — those are
+  not policy-dependent in the same way.
+- `install-stack.sh` does not pass any new flags by default. To get the
+  v0.7.0 behavior back, edit `install-stack.sh` stage 12 to pass
+  `--no-password-auth --no-root-login` to `harden/harden-ssh.sh`, OR run
+  the standalone script with those flags after install completes.
+
 ## [0.7.0] - 2026-05-03
 
 Wave 2 of Plan I.E + Plan H: per-service hardening for sshd, Apache, and PHP

@@ -210,6 +210,53 @@ EOF
   grep -q 'sshd_config\.d/' "${REPO_ROOT}/harden/harden-ssh.sh"
 }
 
+# --- v0.7.1 hot-fix: harden-ssh defaults must NOT lock out root password SSH ---
+
+@test "harden-ssh default heredoc does NOT contain PermitRootLogin no" {
+  # v0.7.0 default disabled root SSH login -- locked operators out who
+  # bootstrap as root. v0.7.1 makes that opt-in via --no-root-login.
+  # The heredoc body (between cat <<'EOF' ... EOF) is the always-applied set.
+  awk '/cat <<.EOF/{f=1; next} /^EOF$/{f=0} f' "${REPO_ROOT}/harden/harden-ssh.sh" \
+    | grep -E '^PermitRootLogin\s+no\s*$' && {
+      echo "FAIL: PermitRootLogin no is in the default heredoc -- should be opt-in via --no-root-login" >&2
+      return 1
+    } || true
+}
+
+@test "harden-ssh default heredoc does NOT contain PasswordAuthentication no" {
+  # v0.7.0 default disabled password auth -- broke litesoup deployments that
+  # rely on password SSH. v0.7.1 makes that opt-in via --no-password-auth.
+  awk '/cat <<.EOF/{f=1; next} /^EOF$/{f=0} f' "${REPO_ROOT}/harden/harden-ssh.sh" \
+    | grep -E '^PasswordAuthentication\s+no\s*$' && {
+      echo "FAIL: PasswordAuthentication no is in the default heredoc -- should be opt-in via --no-password-auth" >&2
+      return 1
+    } || true
+}
+
+@test "harden-ssh --help documents --no-password-auth flag" {
+  run -0 bash "${REPO_ROOT}/harden/harden-ssh.sh" --help
+  [[ "${output}" == *"--no-password-auth"* ]]
+}
+
+@test "harden-ssh --help documents --no-root-login flag" {
+  run -0 bash "${REPO_ROOT}/harden/harden-ssh.sh" --help
+  [[ "${output}" == *"--no-root-login"* ]]
+}
+
+@test "harden-ssh always-safe defaults are still in the heredoc" {
+  # Regression guard: removing the policy directives must not also remove
+  # the always-safe ones. The 6 defaults below should stay in the heredoc.
+  local body
+  body="$(awk '/cat <<.EOF/{f=1; next} /^EOF$/{f=0} f' "${REPO_ROOT}/harden/harden-ssh.sh")"
+  for directive in 'MaxAuthTries 3' 'ClientAliveInterval 300' 'ClientAliveCountMax 2' \
+                   'X11Forwarding no' 'AllowAgentForwarding no' 'PermitEmptyPasswords no'; do
+    grep -qE "^${directive}\s*\$" <<< "${body}" || {
+      echo "FAIL: always-safe default '${directive}' missing from heredoc" >&2
+      return 1
+    }
+  done
+}
+
 @test "harden-apache uses apache2ctl configtest before reload" {
   # Validate AFTER write, BEFORE reload. Catches future regressions where
   # a refactor accidentally drops the configtest gate (apache would refuse

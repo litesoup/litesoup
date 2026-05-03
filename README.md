@@ -150,13 +150,16 @@ To run a site under a different system user (e.g., per-client isolation), pass `
 - **`harden/harden-unattended-upgrades.sh`** — security-only
   auto-updates (no auto-reboot, no mail), via a `52litesoup-unattended`
   override that survives package updates of the default config.
-- **`harden/harden-ssh.sh`** (v0.7.0) — `PermitRootLogin no`,
-  `PasswordAuthentication no` (key-only), `MaxAuthTries 3`, plus client-alive
-  + X11/agent-forwarding off. Validate-then-revert flow: writes the override,
-  runs `sshd -t`, restores from backup if validation fails. **Reload (not
-  restart)** — preserves the live SSH session.
-  ⚠️ **If you bootstrap a host via password-only SSH, set up an SSH key
-  BEFORE running install-stack** — otherwise you'll lock yourself out.
+- **`harden/harden-ssh.sh`** (v0.7.0, defaults softened in v0.7.1) —
+  always-safe defaults: `MaxAuthTries 3`, `ClientAliveInterval 300` /
+  `ClientAliveCountMax 2`, `X11Forwarding no`, `AllowAgentForwarding no`,
+  `PermitEmptyPasswords no`. Two opt-in flags for the policy-dependent
+  directives that v0.7.0 made the default-on mistake of forcing:
+  `--no-password-auth` adds `PasswordAuthentication no` (key-only SSH);
+  `--no-root-login` adds `PermitRootLogin no` (no direct root SSH).
+  Validate-then-revert flow: writes the override, runs `sshd -t`, restores
+  from backup if validation fails. **Reload (not restart)** — preserves the
+  live SSH session.
 - **`harden/harden-apache.sh`** (v0.7.0) — `ServerTokens Prod`,
   `ServerSignature Off`, `TraceEnable Off`, security headers
   (X-Content-Type-Options, X-Frame-Options, Referrer-Policy), mod_status
