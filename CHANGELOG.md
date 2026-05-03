@@ -6,6 +6,133 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-05-03
+
+Bug-fix release. Unblocks CI and any DO Singapore / blocked-network deployment
+that can't reach `ppa.launchpadcontent.net`. Closes codetot-web/litesoup#14.
+First green CI on any branch since the v0.3.0 / Plan I.D merge.
+
+### Fixed
+
+- **CI / install-stack PPA reachability** (closes codetot-web/litesoup#14):
+  `install/lib/apt.sh` `ensure_ppa()` now probes apt-get update for our
+  specific URI after `add-apt-repository` succeeds, and dispatches to a
+  per-PPA mirror when the URI fails to fetch. Previously: GitHub Actions
+  ubuntu-24.04 runners and DO Singapore VPSes (incl. sg10.codetot.org)
+  couldn't reach `ppa.launchpadcontent.net:443` (TLS handshake failure
+  / 503 / connection timed out); apt-get update returned 0 with
+  warnings, then the next apt-get install died with "Unable to locate
+  package php8.2-fpm" because the PPA index never made it into the
+  cache. CI has been red on main since the v0.3.0 / I.D merge for
+  exactly this reason.
+
+  Mirror chosen: **packages.cloudpanel.io** (CloudPanel CE's
+  CloudFront-fronted apt mirror, repackaged Sury PHP builds for
+  Ubuntu noble/jammy + Debian). Same package names, byte-equivalent
+  installs (version suffix `+clp-noble` vs upstream). GPG fingerprint
+  pinned to `4FFD41A7CB8F2CEA5F75E6CC1FD0B9CFEFC59AC9` so silent key
+  rotation fails loudly. arm64/amd64 origin auto-detected via
+  `dpkg --print-architecture`.
+
+  **Coverage caveat:** CloudPanel mirrors core PHP + standard
+  extensions but NOT PECL extensions (`php-imagick`, `php-redis`).
+  Both ARE in the launchpad PPA. To handle this without aborting on
+  CloudPanel-fallback networks, `PHP_EXTENSIONS` was split:
+  - `PHP_EXTENSIONS_CORE` (required, aborts if missing): fpm, cli,
+    common, opcache, mysql, mbstring, xml, curl, gd, zip, intl,
+    bcmath, soap.
+  - `PHP_EXTENSIONS_OPTIONAL` (best-effort, log_warn + skip when
+    not in configured repos): imagick, redis.
+
+  When skipped, WP Redis Object Cache automatically falls back to the
+  bundled Predis pure-PHP client (slower but functional); WP image
+  processing falls back to GD (already in CORE).
+
+  New apt.sh helper: `ensure_pkgs_optional` uses `apt-cache policy`
+  (stricter than `apt-cache show`, which returns 0 even for packages
+  only referenced as dep names) to filter to packages with a real
+  Candidate before invoking `apt_install`.
+
+  End-to-end verified on sg10.codetot.org (Ubuntu 24.04.4 LTS, DO
+  Singapore, launchpad genuinely blocked): all 8 install-stack stages
+  PASS, php8.2-fpm + 12 standard extensions installed from CloudPanel
+  mirror, php8.2-imagick + php8.2-redis correctly skipped with
+  warning, redis-server + memcached configured, site-create injects
+  cache constants across two sites with distinct salts and is
+  idempotent on re-run.
+
+  Long-term posture: self-host an aptly mirror of `ppa:ondrej/php`
+  and remove this third-party dependency. Filed as a separate
+  follow-up.
+
+- **WP_CACHE_KEY_SALT injection deferred to wp-cli native generation**:
+  WP-CLI 2.12.0+ generates `WP_CACHE_KEY_SALT` natively in
+  `wp config create` using the full WordPress secret-key alphabet
+  (higher entropy than our 64-char hex). The existing `wp config has`
+  guard in `inject_cache_constants()` correctly defers — our injection
+  is now a fallback for older wp-cli releases. Test assertions
+  relaxed accordingly (length ≥ 32 + non-empty + distinct across two
+  sites, instead of `^[0-9a-f]{64}$`).
+
+- **Vendor PHP-FPM pool disable handles non-Ubuntu naming**: CloudPanel
+  ships `php8.X-fpm` with `default.conf` (a real `[default]` pool
+  running as `www-data` on `127.0.0.1:17000` with `pm.max_children=250`
+  — same security/resource hole as Ubuntu's `www.conf`, just renamed)
+  instead of Ubuntu's `www.conf`. `ensure_php_fpm()` previously only
+  knew about `www.conf`, so on CloudPanel-mirror installs the default
+  pool ran unchecked. Now disables every `*.conf` in `pool.d/` that
+  isn't litesoup-owned, regardless of vendor naming. Skips
+  `litesoup-*` (ours) and `global.conf` (the [global] settings file,
+  not a pool — master fpm needs it). Test assertions updated to assert
+  the security property generically (no non-litesoup `*.conf` left
+  active, plus at least one `*.conf.disabled` marker).
+
+- **`ensure_php_fpm` idempotent re-run** (`set -e` footgun): the
+  function's last statement was `[ "${disabled_any}" = "1" ] &&
+  systemctl reload`. On re-run when nothing needed disabling, the
+  `&&` short-circuits, the function returns 1, and `set -e` in the
+  caller (`install-stack.sh`'s `for v in ...; do ensure_php_fpm; done`)
+  trips. Result: re-running `install-stack.sh` aborted at "failed at
+  line 128 (exit 1)" even though everything was already in the
+  desired state. Replaced with explicit `if/then/fi` (an `if`
+  statement returns 0 when no branch executes).
+
+- **Probe + mirror fallback also runs after manual PPA registration**:
+  The earlier reachability probe was wired only to the
+  `add-apt-repository succeeds` branch. When `add-apt-repository`
+  itself failed (network flake fetching launchpad metadata), control
+  fell through to the manual-registration path, which writes a
+  launchpad-style `.sources` file pointing at the still-unreachable
+  URL. Both paths now go through the same `_ppa_reachable_or_fallback`
+  call — catches both reachability failure modes uniformly.
+
+### Added
+
+- 11 new bats unit tests in `test/bats/unit_apt.bats` covering
+  `ensure_pkgs_optional`, `_ppa_reachable_or_fallback`,
+  `_ppa_fallback`, and `_ensure_repo_cloudpanel_php` (dry-run path).
+  Total bats unit tests: 80 → 91.
+
+- ERR trap in `test/integration/01_install_stack.sh` that prints
+  `FAIL @ <file>:<line>: <command>` on assertion failure. Cheap
+  diagnostic that surfaces which assertion broke without needing a
+  follow-up CI cycle.
+
+### Changed
+
+- **CI: collapse 3 integration jobs into one container.** Previously
+  `integration-install-stack` → `integration-site-create` →
+  `integration-site-delete` were three `needs:`-chained jobs each
+  spinning a fresh systemd container and running `install-stack.sh`
+  from scratch — `apt install` + PHP from the CloudPanel mirror ran
+  3× per CI run. Now one `integration` job runs all three integration
+  scripts sequentially in the SAME container via
+  `test/docker/run-integration.sh`'s new multi-script support
+  (`./run-integration.sh 01_install_stack.sh 02_site_create.sh
+  03_site_delete.sh`). Per-script `=== <name> ===` /
+  `=== FAILED in <name> (exit N) ===` markers preserve failure
+  granularity. Same coverage; ~3× faster; one CloudPanel fetch per PR.
+
 ## [0.5.0] - 2026-05-02
 
 Plan I.F: caching infrastructure (Redis + Memcached) plus per-site

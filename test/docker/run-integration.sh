@@ -10,7 +10,12 @@
 set -Eeuo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-SCRIPT="${1:?usage: run-integration.sh <integration-script-name>}"
+if [ "$#" -lt 1 ]; then
+  echo "usage: run-integration.sh <script-name> [<script-name> ...]" >&2
+  echo "  Multiple scripts run sequentially in the SAME container -- one bring-up," >&2
+  echo "  one apt install, one PPA fetch (matters for CloudPanel mirror politeness)." >&2
+  exit 64
+fi
 IMG="litesoup-test:ubuntu2404-systemd"
 NAME="litesoup-test"
 
@@ -59,10 +64,18 @@ fi
 docker exec "${NAME}" mkdir -p /opt/litesoup
 docker cp "${REPO_ROOT}/." "${NAME}:/opt/litesoup/"
 
-# Execute the integration script inside the container
+# Execute each integration script inside the SAME container in order. Stop
+# at the first failure so a broken stage doesn't mask later regressions
+# behind cascading failures.
 EXIT=0
-docker exec -w /opt/litesoup "${NAME}" \
-  bash "test/integration/${SCRIPT}" || EXIT=$?
+for SCRIPT in "$@"; do
+  echo "=== ${SCRIPT} ==="
+  if ! docker exec -w /opt/litesoup "${NAME}" bash "test/integration/${SCRIPT}"; then
+    EXIT=$?
+    echo "=== FAILED in ${SCRIPT} (exit ${EXIT}) ==="
+    break
+  fi
+done
 
 # Cleanup
 docker rm -f "${NAME}" >/dev/null 2>&1 || true

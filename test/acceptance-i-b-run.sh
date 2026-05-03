@@ -56,8 +56,10 @@ docker exec "${CTR}" bash -lc '
   set -e
   systemctl is-active php8.2-fpm
   systemctl is-active php8.4-fpm
-  test -f /etc/php/8.2/fpm/pool.d/www.conf.disabled && echo "  www.conf.disabled OK for 8.2"
-  test -f /etc/php/8.4/fpm/pool.d/www.conf.disabled && echo "  www.conf.disabled OK for 8.4"
+  # Accept either www.conf.disabled (Ubuntu PPA) or default.conf.disabled
+  # (CloudPanel mirror) -- whichever the installer disabled.
+  ls /etc/php/8.2/fpm/pool.d/ | grep -qE "\.conf\.disabled$" && echo "  vendor pool disabled OK for 8.2"
+  ls /etc/php/8.4/fpm/pool.d/ | grep -qE "\.conf\.disabled$" && echo "  vendor pool disabled OK for 8.4"
   test -S /run/php/litesoup-php8.2-fpm.sock && echo "  litesoup-php8.2 socket OK"
 '
 
