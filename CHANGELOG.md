@@ -6,6 +6,128 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-05-03
+
+Documentation overhaul. README slimmed from 237 lines to 62 (no technical
+detail, just what + who + 30-second start). Multi-page docs site under
+`docs/` served via GitHub Pages with the just-the-docs theme. Closes
+codetot-web/litesoup#22. Stage 12 install-stack log label corrected to
+match v0.7.1's softer sshd defaults.
+
+This release was built via parallel multi-agent dispatch — 8 Claude
+subagents wrote the docs pages in ~15 min (1550 LOC of markdown across
+9 files). One local Ollama gemma4 probe (on `docs/install.md`) failed
+with empty/malformed JSON output and fell back to a Claude subagent;
+matches the Wave 2 finding that local models are less reliable than
+subagents for content with judgment.
+
+### Added — `docs/` multi-page site (Jekyll + just-the-docs)
+
+New `docs/` folder served via GitHub Pages at
+`https://codetot-web.github.io/litesoup/`. Pages:
+
+- **`docs/index.md`** — landing: who it's for, 30-second start, what you
+  get out of the box.
+- **`docs/install.md`** — full install guide: requirements, common flags,
+  the `LITESOUP_PPA_FORCE_MIRROR=cloudpanel` env var, 14-stage table.
+- **`docs/sites.md`** — `site-create`, `site-set-php`, `site-set-tier`,
+  `site-set-tls`, `site-delete` reference.
+- **`docs/hardening.md`** — all 6 `harden/*` scripts, opt-in flags
+  (especially `harden-ssh --no-password-auth` / `--no-root-login`),
+  `--skip-hardening` guidance.
+- **`docs/caching.md`** — existing v0.5.0 caching policy doc; light
+  tone-pass + Jekyll frontmatter added.
+- **`docs/audit.md`** — all 4 `audit/*` scripts with example output and
+  cron-friendly `--format=json` snippets.
+- **`docs/troubleshooting.md`** — common issues with Symptom / Cause /
+  Fix shape: PHP install errors, SSH lockout recovery, vhost template
+  bug pre-v0.4.1, fail2ban port mismatch, etc.
+- **`docs/architecture.md`** — filesystem layout, per-user FPM model,
+  why bare-metal apt over Docker, idempotency as a first principle.
+- **`docs/roadmap.md`** — what shipped (chronological table v0.1.0→v0.7.1)
+  + what's next (self-hosted aptly mirror, harden-mariadb/redis, OCSP,
+  distro detection, Sigstore signing, tune/maintain/monitor packages).
+- **`docs/contributing.md`** — local test loop, conventions
+  (set-Eeuo-pipefail, common.sh, cmp-then-install idempotency,
+  reload-not-restart), test layers, multi-agent dispatch pattern.
+
+### Added — Jekyll + GitHub Pages infra
+
+- **`docs/_config.yml`** — `remote_theme: just-the-docs/just-the-docs`,
+  dark color scheme, search enabled, edit-this-page footer link.
+- **`.github/workflows/pages.yml`** — builds + deploys docs on every
+  push to main that touches `docs/` or the workflow itself. Uses the
+  official `actions/jekyll-build-pages@v1` + `actions/deploy-pages@v4`
+  flow. To activate: repo Settings → Pages → Source = GitHub Actions
+  (one-time, post-merge).
+
+### Changed — `README.md` (slim)
+
+- Was 237 lines of technical detail (filesystem layout, hardening tables,
+  caching deep-dive). Now 62 lines: tagline + status badges + 30-second
+  start + link block to docs pages + get-help + license.
+- Everything cut from README is preserved + expanded on its dedicated
+  docs page. Operators land on the README, get the quick start, then
+  click through to the relevant docs page.
+
+### Changed — `install/install-stack.sh`
+
+- Stage 12 log label updated from
+  `harden-ssh (PermitRootLogin no, password off, key-only)` to
+  `harden-ssh (always-safe defaults; --no-password-auth / --no-root-login are opt-in)`.
+  The old label was stale post-v0.7.1 (the directives are no longer in the
+  default heredoc — they're opt-in flags). Operators reading install logs
+  no longer see misleading "PermitRootLogin no" claims.
+
+### Verified on sg10.codetot.org (real Ubuntu 24.04 acceptance)
+
+Re-installed v0.7.1 stack on a freshly-rebuilt sg10 droplet:
+
+- All 14 install-stack stages PASS in ~4 min wall-clock
+- `LITESOUP_PPA_FORCE_MIRROR=cloudpanel` env var fast-path correctly
+  bypassed launchpad
+- `php8.2-imagick` + `php8.2-redis` correctly skipped with warning
+  (CloudPanel mirror coverage gap, expected)
+- `harden-ssh` wrote only the always-safe directives:
+  ```
+  MaxAuthTries 3
+  ClientAliveInterval 300
+  ClientAliveCountMax 2
+  X11Forwarding no
+  AllowAgentForwarding no
+  PermitEmptyPasswords no
+  ```
+- `sshd -T` confirms `permitrootlogin yes` and `passwordauthentication
+  yes` are still in effect — exactly what the v0.7.1 hot-fix promised.
+  No SSH lockout risk for hosts that bootstrap as root with password
+  auth.
+
+### Out of scope (queued)
+
+- Search-engine setup (Algolia etc.) — Jekyll's built-in search is
+  sufficient for v1.
+- Translations (English-only for now).
+- Architecture diagrams — text-first; add later if a page needs one.
+- Self-hosted aptly mirror (still TODO; the CloudPanel dependency note
+  in `docs/architecture.md` flags the long-term posture).
+
+### Multi-agent dispatch notes (this release)
+
+- **8 Claude subagents in parallel** (single-message multi-tool call):
+  audit, hardening, sites, troubleshooting, architecture, roadmap,
+  contributing, install (fallback) + caching frontmatter update. Total
+  wall-clock: ~3 min from dispatch to all subagents reporting done.
+  Total output: 1550 LOC of markdown.
+- **1 local Ollama gemma4 probe** on `docs/install.md`: failed with
+  empty/malformed JSON response from the `/api/generate` endpoint.
+  Fell back to a Claude subagent (delivered in 64s). Confirms the Wave
+  2 finding: local models work for one-shot drafts but their failure
+  modes (silent malformed output, no error to retry on) are worse for
+  unattended dispatch than Claude subagents.
+- 3 high-judgment files (README slim, `docs/index.md` landing,
+  `docs/_config.yml`) written by Claude (parent) — these set tone /
+  brand / theme config, not delegation candidates.
+
 ## [0.7.1] - 2026-05-03
 
 Hot-fix release. v0.7.0's `harden/harden-ssh.sh` defaults were too aggressive

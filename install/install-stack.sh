@@ -185,7 +185,7 @@ main() {
   # install-stack on a new host. The script writes /etc/ssh/sshd_config.d/
   # so you can re-enable password auth via a higher-numbered file if you
   # explicitly want it (see /etc/ssh/sshd_config.d/52-litesoup-harden.conf).
-  log_info "stage 12/${total_stages}: harden-ssh (PermitRootLogin no, password off, key-only)"
+  log_info "stage 12/${total_stages}: harden-ssh (always-safe defaults; --no-password-auth / --no-root-login are opt-in)"
   run_or_dryrun bash "${harden_dir}/harden-ssh.sh"
 
   log_info "stage 13/${total_stages}: harden-apache (ServerTokens, headers, mod_status local-only)"
