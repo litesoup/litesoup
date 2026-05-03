@@ -6,6 +6,135 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-05-03
+
+Wave 1 of Plan I.E (security basics) + Plan H (litesoup-native audit/harden
+packages, ported from runcloud-bash-scripts conventions). Closes
+codetot-web/litesoup#16. Two new top-level directories: `harden/` (3
+state-changing scripts) and `audit/` (4 read-only check scripts).
+
+This release was built via multi-agent parallel dispatch — 4 Claude subagents
+wrote the audit ports in ~3min, 3 more subagents wrote the harden scripts in
+~85s after a DeepSeek/9router fallback. Total: 2367 LOC of shellcheck-clean
+bash across 7 new files. Adversarial review pass caught one real bug
+(harden-fail2ban watching the wrong port if sshd is non-default — now uses
+the same `detect_ssh_port` parser as harden-firewall). Documented for future
+reuse of the multi-agent pattern.
+
+### Added — `harden/` (state-changing security baseline)
+
+- `harden/harden-firewall.sh` — configures `ufw` with `deny incoming` /
+  `allow outgoing`, allows the actual sshd port (parsed from
+  `/etc/ssh/sshd_config`, fallback 22) plus 80/tcp + 443/tcp, then enables
+  with `--force` (avoids the interactive prompt that hangs in non-tty
+  contexts). Idempotent: re-runs detect existing rules and report
+  "already configured" without re-applying.
+
+- `harden/harden-fail2ban.sh` — installs fail2ban with two managed jails:
+  `[sshd]` (systemd backend, 3 retries / 1h ban / port matched against
+  sshd_config — NOT the `ssh` alias, which would silently miss
+  non-default ports) and `[apache-auth]` (apache2 error logs, 5 retries
+  / 1h ban). Apache jail skipped with a warning if `/var/log/apache2/`
+  is absent. Idempotent: jail files written via `cmp -s` + `install -m
+  0644` pattern (mirrors `install/lib/redis.sh`); fail2ban only reloaded
+  when at least one file changes.
+
+- `harden/harden-unattended-upgrades.sh` — installs unattended-upgrades +
+  apt-listchanges; writes `/etc/apt/apt.conf.d/52litesoup-unattended`
+  (security-only allowed-origins, no auto-reboot, mail off, remove unused
+  deps) and `/etc/apt/apt.conf.d/20auto-upgrades` (periodic timers). The
+  `52` prefix overrides the package-default `50unattended-upgrades`,
+  which apt may rewrite on package upgrades. Smoke-tested with
+  `unattended-upgrade --dry-run --debug`. Idempotent.
+
+### Added — `audit/` (read-only check scripts)
+
+- `audit/audit-wp-health.sh` — discovers all WP sites under
+  `/home/*/webapps/` (or one via `--domain=`); per site checks core
+  version + update available, plugin count + outdated count, DB
+  connection + size, disk usage, wp-config.php permissions, TLS cert
+  expiry, error log size. Exits 0/1/2 (healthy/warning/critical).
+  Ported from `runcloud-bash-scripts/wp-health-check.sh`, adapted to
+  litesoup conventions (per-user FPM pool layout, common.sh helpers).
+
+- `audit/audit-system-metrics.sh` — read-only system + service metrics:
+  CPU (load + cores + iowait), memory + swap, per-mount disk + inode
+  usage (flags >85%), network (per-iface tx/rx + socket counts), Apache
+  (`/server-status?auto` if reachable), PHP-FPM (per-pool active/idle),
+  MariaDB (connection count + slow query log scan), Redis (INFO with
+  auth from `/etc/litesoup/redis.env`). `--format=text|json` flag.
+  Ported from `runcloud-bash-scripts/server-metrics.sh`; dropped the
+  webhook + HMAC POST (this is a local audit, not a metrics shipper).
+
+- `audit/audit-wp-vulnerabilities.sh` — per-site CVE scan against the
+  free WPVulnerability.net API (no auth required). Enumerates installed
+  plugins/themes via wp-cli, cross-references against the vulnerability
+  database, reports CVE / severity / fixed-version. `--include-core`,
+  `--plugins-only`, `--themes-only` flags. Documents the litesoup secret
+  pattern (`/etc/litesoup/wpscan.env`) for future migration to the paid
+  WPScan API. Ported from `runcloud-bash-scripts/wp-vuln-check.sh`.
+
+- `audit/audit-performance.sh` (NEW — flagged in architecture doc Plan I.F
+  future-work line) — compares live config of Apache (mpm_event),
+  PHP-FPM per-pool sizing, OPcache, MariaDB, and Redis against
+  recommended values for the system's RAM tier (small <2G / medium 2–8G
+  / large ≥8G — same tier mapping as `install/lib/redis.sh`). Per-tunable
+  findings with current vs recommended values + WARN/CRIT severity.
+  `--service=apache|php-fpm|opcache|mariadb|redis|all` and
+  `--format=text|json` flags.
+
+### Changed — `install/install-stack.sh`
+
+- Stages bumped from `1/8..8/8` to `1/11..11/11`. Added stages
+  9/10/11 invoking the three harden scripts (after services are up so
+  fail2ban can watch real Apache logs).
+- New `--skip-hardening` flag for dev VMs / hosts where the firewall is
+  managed elsewhere. With this flag, stages 9–11 are skipped and the
+  total stage label drops to `/8` so log progression stays accurate.
+
+### Changed — CI
+
+- `shellcheck` job now also covers `harden/*.sh` and `audit/*.sh`.
+
+### Added — tests
+
+- `test/bats/unit_harden.bats` — 18 new unit tests covering
+  `detect_ssh_port` (5 cases — fallback, present, last-wins,
+  comment-skipping, non-numeric rejection), `ufw_is_active` /
+  `ufw_rule_present` (4 cases), parser parity between
+  harden-firewall and harden-fail2ban (1 case — guards against the bug
+  caught in adversarial review where the two scripts could disagree on
+  the SSH port), `--help` smoke for all 7 new scripts (7 cases), and
+  install-stack `--help` mentions `--skip-hardening` (1 case).
+- Total bats unit tests: 91 → **109**.
+
+### Out of scope (Wave 2/3 in plan I.E + plan H)
+
+- Wave 2: `harden/` ports of ssh / apache / php / mariadb / redis
+  (broader hardening beyond Wave 1's firewall/fail2ban/auto-updates).
+- Wave 2: I.E.4 — Sigstore-signed installer releases.
+- Wave 3: I.E.2 (OCSP stapling), I.E.3 (Debian 12 + Ubuntu 22.04
+  support), I.E.5 (`install-stack --remove-php=X.Y` flag).
+- Wave 3: `tune/`, `maintain/`, `monitor/` directory ports.
+
+### Multi-agent dispatch notes (for the next wave)
+
+- **Claude subagents (general-purpose) work great** for shell-script
+  generation when given a self-contained brief with conventions to read
+  + scope-locked target file + max-2-retries. 4 audit scripts + 3 harden
+  scripts produced in two parallel batches, all shellcheck-clean on first
+  delivery.
+- **opencode/DeepSeek hung** — appears 9router (the local routing proxy
+  at `localhost:20128`) was down. opencode buffered to 9router and
+  produced no output for 24+ minutes before being killed. Falling back
+  to subagents was faster than diagnosing the proxy.
+- **Adversarial pass found one bug** — fail2ban using `port = ssh`
+  resolves to 22 via /etc/services, while harden-firewall correctly
+  parsed sshd_config. On a host with sshd on a non-default port, the
+  firewall would open the right port and fail2ban would watch the wrong
+  one (= no SSH brute-force protection at all). Fixed by extracting
+  the same `detect_ssh_port` parser into both files.
+
 ## [0.5.1] - 2026-05-03
 
 Bug-fix release. Unblocks CI and any DO Singapore / blocked-network deployment

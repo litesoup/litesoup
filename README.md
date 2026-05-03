@@ -135,6 +135,41 @@ sudo bash site/site-create.sh --domain=beta.test --php=8.4
 
 To run a site under a different system user (e.g., per-client isolation), pass `--user=NAME` to `site-create.sh`. The user is created on demand and gets its own FPM pool at `/run/php/<user>-php8.2-fpm.sock`.
 
+## Hardening
+
+`install-stack.sh` also runs three hardening scripts at the end (stages
+9–11), each idempotent and standalone-runnable:
+
+- **`harden/harden-firewall.sh`** — ufw with `deny incoming` / `allow
+  outgoing`, opens sshd's actual port (parsed from `sshd_config`,
+  fallback 22) plus 80/tcp + 443/tcp, then `ufw --force enable`.
+- **`harden/harden-fail2ban.sh`** — fail2ban with managed `[sshd]`
+  jail (systemd backend, 3 retries / 1h ban, port matches sshd_config)
+  and `[apache-auth]` jail (5 retries / 1h ban). Apache jail skipped
+  if Apache isn't installed.
+- **`harden/harden-unattended-upgrades.sh`** — security-only
+  auto-updates (no auto-reboot, no mail), via a `52litesoup-unattended`
+  override that survives package updates of the default config.
+
+Pass `--skip-hardening` to `install-stack.sh` to skip these on dev
+VMs / hosts where the firewall is managed elsewhere.
+
+## Auditing
+
+Read-only check scripts under `audit/`. None of them mutate state.
+Run any of them standalone with `--help` to see options.
+
+- **`audit/audit-wp-health.sh`** — per-site WP health (core version,
+  plugins, DB, disk, perms, TLS expiry, error log size). Exit code
+  reflects severity (0/1/2 = healthy/warning/critical).
+- **`audit/audit-system-metrics.sh`** — CPU / memory / disk / net /
+  Apache / PHP-FPM / MariaDB / Redis metrics in text or JSON.
+- **`audit/audit-wp-vulnerabilities.sh`** — per-site CVE scan against
+  the free WPVulnerability.net API.
+- **`audit/audit-performance.sh`** — compares live config of Apache,
+  PHP-FPM, OPcache, MariaDB, Redis against recommended values for the
+  system's RAM tier; flags drift with WARN/CRIT severity.
+
 ## Caching
 
 Redis and Memcached are installed by `install-stack.sh`. `site-create.sh`
@@ -151,8 +186,8 @@ diagnose. Full details and recommended plugins: [`docs/caching.md`](docs/caching
 
 ## What's deferred to later sub-plans
 
-- **Plan I.E** — `install-stack --remove-php=X.Y`, `ufw`, `fail2ban`, `unattended-upgrades`, OCSP stapling, broader hardening, distro-detection beyond Ubuntu 24.04, and Sigstore-signed releases
-- **Plan H** — bash-scripts reorganization into `audit/`, `harden/`, `tune/` directories
+- **Plan I.E (Wave 2/3)** — Sigstore-signed installer releases, OCSP stapling, distro detection beyond Ubuntu 24.04, `install-stack --remove-php=X.Y`, broader per-service hardening (ssh, apache, php, mariadb, redis)
+- **Plan H (Wave 2/3)** — `tune/`, `maintain/`, `monitor/` package ports
 - **Plans A / J / E** — VPS migration, two-tier dashboard, client tenant portal
 
 ## Testing

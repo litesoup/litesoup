@@ -43,6 +43,9 @@ Options:
   --redis-maxmemory=SIZE      Override Redis maxmemory (e.g. 256mb, 1gb).
                               Default: auto from system RAM tier
                               (<2G→128mb, 2–8G→512mb, ≥8G→2gb).
+  --skip-hardening            Skip stages 9-11 (firewall, fail2ban,
+                              unattended-upgrades). Use for dev VMs or
+                              when host-managed elsewhere.
   --dry-run                   Print actions without executing
   --help                      Show this help
 
@@ -62,10 +65,12 @@ main() {
   local arg
   local php_versions_csv=""
   local redis_maxmemory=""
+  local skip_hardening=0
   for arg in "$@"; do
     case "${arg}" in
       --php-versions=*)    php_versions_csv="${arg#*=}" ;;
       --redis-maxmemory=*) redis_maxmemory="${arg#*=}" ;;
+      --skip-hardening)    skip_hardening=1 ;;
       --dry-run) DRY_RUN=1 ;;
       --help|-h) usage; exit 0 ;;
       *) log_error "unknown argument: ${arg}"; usage; exit 64 ;;
@@ -119,33 +124,59 @@ main() {
   require_root
   require_ubuntu_2404
 
-  log_info "stage 1/8: apache"
+  # Stage count: with --skip-hardening, stages 9/10/11 are skipped (8 total).
+  # Without it, all 11 stages run.
+  local total_stages=11
+  [ "${skip_hardening}" = "1" ] && total_stages=8
+
+  log_info "stage 1/${total_stages}: apache"
   ensure_apache
 
-  log_info "stage 2/8: php (versions: ${php_versions[*]})"
+  log_info "stage 2/${total_stages}: php (versions: ${php_versions[*]})"
   for v in "${php_versions[@]}"; do
     log_info "  -> php ${v}"
     ensure_php_fpm "${v}"
   done
 
-  log_info "stage 3/8: default site owner (${DEFAULT_SITE_USER}) + per-user pool @ ${PHP_VERSION_DEFAULT}"
+  log_info "stage 3/${total_stages}: default site owner (${DEFAULT_SITE_USER}) + per-user pool @ ${PHP_VERSION_DEFAULT}"
   ensure_user "${DEFAULT_SITE_USER}"
   ensure_php_pool_for_user "${DEFAULT_SITE_USER}" "${PHP_VERSION_DEFAULT}"
 
-  log_info "stage 4/8: mariadb"
+  log_info "stage 4/${total_stages}: mariadb"
   ensure_mariadb
 
-  log_info "stage 5/8: wp-cli"
+  log_info "stage 5/${total_stages}: wp-cli"
   ensure_wp_cli
 
-  log_info "stage 6/8: certbot (LE auto-renewal)"
+  log_info "stage 6/${total_stages}: certbot (LE auto-renewal)"
   ensure_certbot
 
-  log_info "stage 7/8: redis"
+  log_info "stage 7/${total_stages}: redis"
   ensure_redis "${redis_maxmemory}"
 
-  log_info "stage 8/8: memcached"
+  log_info "stage 8/${total_stages}: memcached"
   ensure_memcached
+
+  if [ "${skip_hardening}" = "1" ]; then
+    log_info "litesoup install-stack: COMPLETE (hardening skipped via --skip-hardening)"
+    return 0
+  fi
+
+  # Hardening stages must run AFTER services are up: harden-fail2ban watches
+  # /var/log/apache2/*error.log which only exists once Apache is installed
+  # (stage 1). harden-firewall opens 80/443 — fine to do before or after
+  # Apache, but doing it after keeps "services first, lock down second"
+  # ordering consistent with traditional sysadmin practice.
+  local harden_dir="${SCRIPT_DIR}/../harden"
+
+  log_info "stage 9/${total_stages}: harden-firewall (ufw)"
+  run_or_dryrun bash "${harden_dir}/harden-firewall.sh"
+
+  log_info "stage 10/${total_stages}: harden-fail2ban"
+  run_or_dryrun bash "${harden_dir}/harden-fail2ban.sh"
+
+  log_info "stage 11/${total_stages}: harden-unattended-upgrades"
+  run_or_dryrun bash "${harden_dir}/harden-unattended-upgrades.sh"
 
   log_info "litesoup install-stack: COMPLETE"
 }
