@@ -6,6 +6,122 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-05-03
+
+Wave 2 of Plan I.E + Plan H: per-service hardening for sshd, Apache, and PHP
+(global ini level). Closes codetot-web/litesoup#18. Three new `harden/`
+scripts wired into install-stack as stages 12/13/14.
+
+This release was built via multi-agent dispatch with a real fallback story:
+local Ollama qwen2.5-coder:14b was tried first per `~/.claude/CLAUDE.md`
+routing ("daily driver codegen"). Output was shellcheck-clean but contained
+3 semantic bugs (literal `\n` in heredoc content → invalid sshd_config;
+validation against the wrong file; unset variable crash under `set -u`).
+Fell back to 3 Claude subagents in parallel — all 3 delivered correct
+working scripts in ~2 min, no further bugs caught by adversarial review.
+Lesson: shellcheck-clean does not equal semantically-correct. The per-script
+brief that explicitly called out each qwen failure mode helped subagents
+avoid them.
+
+### ⚠️ Breaking-by-default
+
+`harden-ssh.sh` disables `PasswordAuthentication`. **If you bootstrap a host
+via password-only SSH** (e.g., a fresh DO droplet's root password) and then
+run `install-stack.sh`, you will be locked out on next session. **Always
+set up an SSH key BEFORE running install-stack on a new host**.
+`install-stack.sh:184` documents this in a comment block. To opt out for a
+specific host, run `install-stack.sh --skip-hardening` (skips all
+stages 9-14, not just SSH) or re-enable password auth manually via a
+higher-numbered file in `/etc/ssh/sshd_config.d/` after install completes.
+
+### Added — `harden/` Wave 2
+
+- **`harden/harden-ssh.sh`** — writes a managed override at
+  `/etc/ssh/sshd_config.d/52-litesoup-harden.conf`:
+  `PermitRootLogin no`, `PasswordAuthentication no` (key-only),
+  `MaxAuthTries 3`, `ClientAliveInterval 300`, `ClientAliveCountMax 2`,
+  `X11Forwarding no`, `AllowAgentForwarding no`, `PermitEmptyPasswords no`.
+  **Validate-then-revert flow**: snapshots existing override (if any)
+  to a tmp backup → writes new override → runs `sshd -t` (full include
+  chain) → on failure, restores backup and re-validates so a broken
+  pre-existing config is surfaced separately from a broken new override.
+  Reload (NOT restart) — preserves the live SSH session. Skips the Port
+  directive (that's harden-firewall's concern). DOES NOT edit
+  `/etc/ssh/sshd_config` directly (apt may rewrite it).
+
+- **`harden/harden-apache.sh`** — writes two managed snippets to
+  `/etc/apache2/conf-available/`:
+  - `52-litesoup-harden.conf` — `ServerTokens Prod`, `ServerSignature
+    Off`, `TraceEnable Off`, plus security headers via mod_headers
+    (`X-Content-Type-Options nosniff`, `X-Frame-Options SAMEORIGIN`,
+    `Referrer-Policy strict-origin-when-cross-origin`). Headers wrapped
+    in `<IfModule mod_headers.c>` so the snippet is safe even on
+    non-litesoup hosts where mod_headers isn't loaded.
+  - `52-litesoup-mod-status.conf` — restricts `/server-status` to
+    `Require local` if mod_status is loaded.
+  - Disables mod_info if currently loaded (`a2dismod info || true`).
+  - `apache2ctl configtest` AFTER write, BEFORE reload. Reload-only
+    (preserves connections).
+
+- **`harden/harden-php.sh`** — discovers every installed PHP version
+  under `/etc/php/X.Y/`, writes managed `52-litesoup-harden.ini` to
+  BOTH `cli/conf.d/` AND `fpm/conf.d/`:
+  `expose_php = Off`, `allow_url_fopen = Off`, `allow_url_include = Off`,
+  `display_errors = Off`, `display_startup_errors = Off`, `log_errors = On`,
+  `session.cookie_httponly = 1`, `session.cookie_secure = 1`,
+  `session.use_strict_mode = 1`. Per-version FPM reload tracking — only
+  reloads `php<v>-fpm.service` for versions whose conf actually changed
+  AND whose service is `is-active`. Complementary to existing per-pool
+  hardening already in `install/lib/php.sh`'s pool template.
+
+### Changed — `install/install-stack.sh`
+
+- Stages bumped 1/11..11/11 → **1/14..14/14**. Added stages 12 (ssh),
+  13 (apache), 14 (php). With `--skip-hardening`, total stays at /8.
+- Comment block at the SSH stage documents the password-lockout risk.
+
+### Added — tests
+
+- 7 new bats in `test/bats/unit_harden.bats`:
+  - `--help` smoke for harden-ssh, harden-apache, harden-php (3 cases)
+  - Path discipline guard: harden-ssh writes to `sshd_config.d/`, not
+    main config (1 case — defends against a future regression that
+    edits the package-managed file)
+  - Path discipline guard: harden-php writes to `conf.d/`, not main
+    php.ini (1 case)
+  - harden-apache uses `apache2ctl configtest` before reload (1 case)
+  - All 3 Wave-2 harden scripts use `systemctl reload`, not `restart`
+    (1 case — preserves SSH sessions / Apache connections / PHP-FPM
+    requests)
+- Total bats unit tests: 109 → **116**.
+
+### Multi-agent dispatch notes (see also v0.6.0 notes)
+
+- **Local Ollama qwen2.5-coder:14b** (per `~/.claude/CLAUDE.md` routing
+  table for daily-driver codegen): generated harden-ssh.sh in 29s,
+  shellcheck-clean, but produced 3 semantic bugs (literal `\n`, wrong
+  validation order, unset variable crash). shellcheck does not catch
+  semantic correctness — it only catches syntactic and a handful of
+  pattern-based issues.
+- **Fallback to 3 parallel Claude subagents** (single-message multi-tool
+  call, per Wave 1 pattern): all 3 scripts delivered correct + working
+  in ~2 min combined. Per-script briefs explicitly called out the
+  qwen failure modes ("don't write `\n` strings — use heredoc"; "validate
+  AFTER write, not before"; "initialize CHANGED=0 — set -u crashes
+  otherwise"). Each subagent reported avoiding the specific failure modes.
+- **Routing decision**: for bash codegen with critical correctness
+  requirements (semantic correctness, not just syntactic), Claude
+  subagents remain the safer default. Local models are useful for
+  drafts but need a verification pass that catches more than shellcheck
+  before integration.
+
+### Out of scope (Wave 3)
+
+- harden-mariadb, harden-redis (broader hardening)
+- I.E.2 OCSP stapling, I.E.3 distro detection, I.E.4 Sigstore signed
+  releases, I.E.5 `--remove-php=X.Y` flag
+- `tune/`, `maintain/`, `monitor/` directory ports
+
 ## [0.6.0] - 2026-05-03
 
 Wave 1 of Plan I.E (security basics) + Plan H (litesoup-native audit/harden

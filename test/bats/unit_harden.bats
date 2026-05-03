@@ -185,6 +185,56 @@ EOF
   [[ "${output}" == *"litesoup harden-unattended-upgrades"* ]]
 }
 
+# --- Wave 2 harden scripts (v0.7.0) ---
+
+@test "harden-ssh --help exits 0 without root" {
+  run -0 bash "${REPO_ROOT}/harden/harden-ssh.sh" --help
+  [[ "${output}" == *"harden-ssh"* ]]
+}
+
+@test "harden-apache --help exits 0 without root" {
+  run -0 bash "${REPO_ROOT}/harden/harden-apache.sh" --help
+  [[ "${output}" == *"harden-apache"* ]]
+}
+
+@test "harden-php --help exits 0 without root" {
+  run -0 bash "${REPO_ROOT}/harden/harden-php.sh" --help
+  [[ "${output}" == *"harden-php"* ]]
+}
+
+@test "harden-ssh writes to sshd_config.d/ not main sshd_config" {
+  # Defensive: editing /etc/ssh/sshd_config directly is fragile because apt
+  # may rewrite it on package upgrades. The script must use the .d/ override
+  # convention. This test guards against future regressions.
+  ! grep -E '^[^#]*\s>\s*/etc/ssh/sshd_config\b' "${REPO_ROOT}/harden/harden-ssh.sh"
+  grep -q 'sshd_config\.d/' "${REPO_ROOT}/harden/harden-ssh.sh"
+}
+
+@test "harden-apache uses apache2ctl configtest before reload" {
+  # Validate AFTER write, BEFORE reload. Catches future regressions where
+  # a refactor accidentally drops the configtest gate (apache would refuse
+  # to reload anyway, but we want a clean error message).
+  grep -q 'apache2ctl configtest' "${REPO_ROOT}/harden/harden-apache.sh"
+}
+
+@test "harden-php writes to conf.d/ not main php.ini" {
+  # Same reasoning as harden-ssh: package-managed files may be rewritten.
+  ! grep -E '^[^#]*\s>\s*/etc/php/[0-9.]+/(cli|fpm)/php\.ini\b' "${REPO_ROOT}/harden/harden-php.sh"
+  grep -q 'conf\.d/' "${REPO_ROOT}/harden/harden-php.sh"
+}
+
+@test "all 3 wave-2 harden scripts use systemctl reload not restart (preserve sessions/connections)" {
+  # SSH reload preserves the live session; restart kills it.
+  # Apache reload preserves connections; restart drops them.
+  # PHP-FPM reload preserves running requests; restart kills them.
+  for script in harden-ssh harden-apache harden-php; do
+    if grep -E 'systemctl[[:space:]]+restart[[:space:]]+(ssh|apache2|php[0-9.]+-fpm)' "${REPO_ROOT}/harden/${script}.sh"; then
+      echo "FAIL: ${script}.sh uses 'systemctl restart' for a session-bearing service" >&2
+      return 1
+    fi
+  done
+}
+
 # --- script smoke: --help works on each audit script ---
 
 @test "audit-wp-health --help exits 0 without root" {

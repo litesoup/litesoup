@@ -124,9 +124,9 @@ main() {
   require_root
   require_ubuntu_2404
 
-  # Stage count: with --skip-hardening, stages 9/10/11 are skipped (8 total).
-  # Without it, all 11 stages run.
-  local total_stages=11
+  # Stage count: with --skip-hardening, stages 9-14 are skipped (8 total).
+  # Without it, all 14 stages run.
+  local total_stages=14
   [ "${skip_hardening}" = "1" ] && total_stages=8
 
   log_info "stage 1/${total_stages}: apache"
@@ -177,6 +177,22 @@ main() {
 
   log_info "stage 11/${total_stages}: harden-unattended-upgrades"
   run_or_dryrun bash "${harden_dir}/harden-unattended-upgrades.sh"
+
+  # Hardening stages 12-14 added in v0.7.0. CRITICAL: harden-ssh disables
+  # PasswordAuthentication. If you bootstrap a host via password-only SSH
+  # (e.g., fresh DO droplet's root password), running install-stack will
+  # lock you out on next session. Always set up an SSH key BEFORE running
+  # install-stack on a new host. The script writes /etc/ssh/sshd_config.d/
+  # so you can re-enable password auth via a higher-numbered file if you
+  # explicitly want it (see /etc/ssh/sshd_config.d/52-litesoup-harden.conf).
+  log_info "stage 12/${total_stages}: harden-ssh (PermitRootLogin no, password off, key-only)"
+  run_or_dryrun bash "${harden_dir}/harden-ssh.sh"
+
+  log_info "stage 13/${total_stages}: harden-apache (ServerTokens, headers, mod_status local-only)"
+  run_or_dryrun bash "${harden_dir}/harden-apache.sh"
+
+  log_info "stage 14/${total_stages}: harden-php (php.ini hardening per version)"
+  run_or_dryrun bash "${harden_dir}/harden-php.sh"
 
   log_info "litesoup install-stack: COMPLETE"
 }
