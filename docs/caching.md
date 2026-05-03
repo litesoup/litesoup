@@ -1,9 +1,15 @@
+---
+layout: default
+title: Caching
+nav_order: 6
+---
+
 # Caching
 
 litesoup ships caching **infrastructure** — Redis and Memcached are
 installed, hardened, and listening on localhost — but does **not**
-configure WordPress-side caching for you. You pick the WP plugin
-that fits your workflow; the stack makes sure it works.
+configure WordPress-side caching for you. Pick the WP plugin that
+fits your workflow; the stack makes sure it works.
 
 This is a deliberate split:
 
@@ -133,10 +139,10 @@ if you'd rather avoid running two cache plugins.
 
 Most WordPress Memcached plugins do not implement per-site key
 prefixing well. **Prefer Redis when running more than one site on a
-single instance.** If you have a single-tenant box and want the
-slightly lower memory footprint of Memcached, the standard pattern is
-the [Memcached Object Cache](https://wordpress.org/plugins/memcached/)
-drop-in — but you'll need to manage key isolation yourself if you ever
+single instance.** On a single-tenant box, if you want the slightly
+lower memory footprint of Memcached, use the
+[Memcached Object Cache](https://wordpress.org/plugins/memcached/)
+drop-in. You'll need to manage key isolation yourself if you ever
 add a second site.
 
 ## Verifying it works
