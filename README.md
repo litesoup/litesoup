@@ -150,9 +150,26 @@ To run a site under a different system user (e.g., per-client isolation), pass `
 - **`harden/harden-unattended-upgrades.sh`** — security-only
   auto-updates (no auto-reboot, no mail), via a `52litesoup-unattended`
   override that survives package updates of the default config.
+- **`harden/harden-ssh.sh`** (v0.7.0) — `PermitRootLogin no`,
+  `PasswordAuthentication no` (key-only), `MaxAuthTries 3`, plus client-alive
+  + X11/agent-forwarding off. Validate-then-revert flow: writes the override,
+  runs `sshd -t`, restores from backup if validation fails. **Reload (not
+  restart)** — preserves the live SSH session.
+  ⚠️ **If you bootstrap a host via password-only SSH, set up an SSH key
+  BEFORE running install-stack** — otherwise you'll lock yourself out.
+- **`harden/harden-apache.sh`** (v0.7.0) — `ServerTokens Prod`,
+  `ServerSignature Off`, `TraceEnable Off`, security headers
+  (X-Content-Type-Options, X-Frame-Options, Referrer-Policy), mod_status
+  restricted to `Require local`, mod_info disabled. Validates with
+  `apache2ctl configtest` before reload.
+- **`harden/harden-php.sh`** (v0.7.0) — per-version `php.ini` hardening:
+  `expose_php = Off`, `allow_url_fopen/include = Off`, errors logged not
+  displayed, session cookies HttpOnly + Secure + strict-mode. Discovers
+  every installed PHP version and reloads only the FPM services whose
+  conf actually changed.
 
-Pass `--skip-hardening` to `install-stack.sh` to skip these on dev
-VMs / hosts where the firewall is managed elsewhere.
+Pass `--skip-hardening` to `install-stack.sh` to skip stages 9–14 on dev
+VMs / hosts where security is managed elsewhere.
 
 ## Auditing
 

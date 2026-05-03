@@ -80,6 +80,32 @@ ensure_ppa() {
     log_info "apt: PPA ${ppa} already added (${probe} exists)"
     return 0
   fi
+
+  # Fast path for environments with known launchpad reachability problems
+  # (CI runners, DO Singapore VPSes). Skips `add-apt-repository` entirely
+  # (which otherwise blocks ~60-120s on launchpad before our reachability
+  # probe times out and triggers fallback) and goes straight to the per-PPA
+  # mirror.
+  #
+  # Set LITESOUP_PPA_FORCE_MIRROR=cloudpanel in the environment to opt in.
+  # Currently only ondrej/php has a configured mirror (CloudPanel CDN).
+  if [ -n "${LITESOUP_PPA_FORCE_MIRROR:-}" ]; then
+    log_info "apt: LITESOUP_PPA_FORCE_MIRROR=${LITESOUP_PPA_FORCE_MIRROR} -- skipping add-apt-repository for ${ppa}"
+    case "${LITESOUP_PPA_FORCE_MIRROR}:${ppa}" in
+      cloudpanel:ppa:ondrej/php)
+        ensure_pkgs curl gnupg
+        if ! _ensure_repo_cloudpanel_php "${probe}"; then
+          log_error "apt: forced cloudpanel mirror failed for ${ppa}"
+          return 1
+        fi
+        return 0
+        ;;
+      *)
+        log_warn "apt: LITESOUP_PPA_FORCE_MIRROR=${LITESOUP_PPA_FORCE_MIRROR} has no mapping for ${ppa}, falling through to launchpad-first path"
+        ;;
+    esac
+  fi
+
   ensure_pkgs software-properties-common gnupg
   log_info "apt: adding PPA ${ppa}"
 
