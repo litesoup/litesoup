@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-05-03
+
+Bug-fix release. Unblocks CI and any DO Singapore / blocked-network deployment
+that can't reach `ppa.launchpadcontent.net`. Closes codetot-web/litesoup#14.
+First green CI on any branch since the v0.3.0 / Plan I.D merge.
+
 ### Fixed
 
 - **CI / install-stack PPA reachability** (closes codetot-web/litesoup#14):
@@ -68,12 +74,64 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   relaxed accordingly (length ≥ 32 + non-empty + distinct across two
   sites, instead of `^[0-9a-f]{64}$`).
 
+- **Vendor PHP-FPM pool disable handles non-Ubuntu naming**: CloudPanel
+  ships `php8.X-fpm` with `default.conf` (a real `[default]` pool
+  running as `www-data` on `127.0.0.1:17000` with `pm.max_children=250`
+  — same security/resource hole as Ubuntu's `www.conf`, just renamed)
+  instead of Ubuntu's `www.conf`. `ensure_php_fpm()` previously only
+  knew about `www.conf`, so on CloudPanel-mirror installs the default
+  pool ran unchecked. Now disables every `*.conf` in `pool.d/` that
+  isn't litesoup-owned, regardless of vendor naming. Skips
+  `litesoup-*` (ours) and `global.conf` (the [global] settings file,
+  not a pool — master fpm needs it). Test assertions updated to assert
+  the security property generically (no non-litesoup `*.conf` left
+  active, plus at least one `*.conf.disabled` marker).
+
+- **`ensure_php_fpm` idempotent re-run** (`set -e` footgun): the
+  function's last statement was `[ "${disabled_any}" = "1" ] &&
+  systemctl reload`. On re-run when nothing needed disabling, the
+  `&&` short-circuits, the function returns 1, and `set -e` in the
+  caller (`install-stack.sh`'s `for v in ...; do ensure_php_fpm; done`)
+  trips. Result: re-running `install-stack.sh` aborted at "failed at
+  line 128 (exit 1)" even though everything was already in the
+  desired state. Replaced with explicit `if/then/fi` (an `if`
+  statement returns 0 when no branch executes).
+
+- **Probe + mirror fallback also runs after manual PPA registration**:
+  The earlier reachability probe was wired only to the
+  `add-apt-repository succeeds` branch. When `add-apt-repository`
+  itself failed (network flake fetching launchpad metadata), control
+  fell through to the manual-registration path, which writes a
+  launchpad-style `.sources` file pointing at the still-unreachable
+  URL. Both paths now go through the same `_ppa_reachable_or_fallback`
+  call — catches both reachability failure modes uniformly.
+
 ### Added
 
 - 11 new bats unit tests in `test/bats/unit_apt.bats` covering
   `ensure_pkgs_optional`, `_ppa_reachable_or_fallback`,
   `_ppa_fallback`, and `_ensure_repo_cloudpanel_php` (dry-run path).
   Total bats unit tests: 80 → 91.
+
+- ERR trap in `test/integration/01_install_stack.sh` that prints
+  `FAIL @ <file>:<line>: <command>` on assertion failure. Cheap
+  diagnostic that surfaces which assertion broke without needing a
+  follow-up CI cycle.
+
+### Changed
+
+- **CI: collapse 3 integration jobs into one container.** Previously
+  `integration-install-stack` → `integration-site-create` →
+  `integration-site-delete` were three `needs:`-chained jobs each
+  spinning a fresh systemd container and running `install-stack.sh`
+  from scratch — `apt install` + PHP from the CloudPanel mirror ran
+  3× per CI run. Now one `integration` job runs all three integration
+  scripts sequentially in the SAME container via
+  `test/docker/run-integration.sh`'s new multi-script support
+  (`./run-integration.sh 01_install_stack.sh 02_site_create.sh
+  03_site_delete.sh`). Per-script `=== <name> ===` /
+  `=== FAILED in <name> (exit N) ===` markers preserve failure
+  granularity. Same coverage; ~3× faster; one CloudPanel fetch per PR.
 
 ## [0.5.0] - 2026-05-02
 
