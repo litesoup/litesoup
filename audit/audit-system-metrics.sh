@@ -503,7 +503,9 @@ run_once() {
 
 if [ "${WATCH}" -gt 0 ]; then
   while true; do
-    [ "${FORMAT}" = "text" ] && clear 2>/dev/null || true
+    if [ "${FORMAT}" = "text" ]; then
+      clear 2>/dev/null || true
+    fi
     run_once
     sleep "${WATCH}"
   done
