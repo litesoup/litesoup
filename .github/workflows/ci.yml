@@ -24,6 +24,8 @@ jobs:
                      install/install-stack.sh \
                      install/lib/*.sh \
                      site/*.sh \
+                     harden/*.sh \
+                     audit/*.sh \
                      test/docker/run-integration.sh \
                      test/integration/*.sh
 
