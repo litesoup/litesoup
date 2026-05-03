@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # harden/harden-ssh.sh — write a managed sshd hardening override and reload ssh.
-# Usage: sudo bash harden-ssh.sh [--dry-run] [--help]
+# Usage: sudo bash harden-ssh.sh [--no-password-auth] [--no-root-login] [--dry-run] [--help]
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../install/lib/common.sh
@@ -10,6 +10,8 @@ OVERRIDE_FILE="/etc/ssh/sshd_config.d/52-litesoup-harden.conf"
 # Initialize at top: under `set -u` (enabled by common.sh) `${CHANGED}` would
 # crash the script before main() ever sets it. Read defensively as ${CHANGED:-0}.
 CHANGED=0
+NO_PASSWORD_AUTH=0
+NO_ROOT_LOGIN=0
 
 usage() {
   cat <<'EOF'
@@ -18,11 +20,31 @@ litesoup harden-ssh — write managed sshd hardening override for Ubuntu 24.04
 Usage: sudo bash harden-ssh.sh [options]
 
 Options:
-  --dry-run   Print actions without executing
-  --help, -h  Show this help
+  --no-password-auth  ALSO disable password authentication (key-only SSH).
+                      OPT-IN -- not in defaults. Make sure your operators
+                      have working SSH keys before enabling, or you will
+                      lock everyone out on next session.
+  --no-root-login     ALSO disable direct root SSH login. OPT-IN -- not in
+                      defaults. Many litesoup deployments run install-stack
+                      AS root over SSH; enabling this without first setting
+                      up a non-root operator with sudo will lock you out.
+  --dry-run           Print actions without executing
+  --help, -h          Show this help
+
+Always-applied defaults (always safe):
+  MaxAuthTries 3              # brute-force mitigation
+  ClientAliveInterval 300     # idle session reaping
+  ClientAliveCountMax 2
+  X11Forwarding no            # almost no one uses this; surface reduction
+  AllowAgentForwarding no     # avoids agent-forwarding attacks
+  PermitEmptyPasswords no     # zero-password is never the answer
+
+Opt-in extras (only added when the matching flag is passed):
+  PasswordAuthentication no   # requires --no-password-auth
+  PermitRootLogin no          # requires --no-root-login
 
 Behavior:
-  1. Render desired sshd hardening directives.
+  1. Render desired sshd hardening directives based on flags.
   2. Write them to /etc/ssh/sshd_config.d/52-litesoup-harden.conf
      (mode 0644 root:root) only when content differs. The 52- prefix
      ensures we override any 50-cloud-init / 50-default present.
@@ -32,20 +54,13 @@ Behavior:
      Reload preserves the active SSH session; restart would drop it.
   5. Print active hardening directives across /etc/ssh/sshd_config.d/*.conf.
 
-Managed directives (written verbatim, not merged):
-  PermitRootLogin no
-  PasswordAuthentication no
-  MaxAuthTries 3
-  ClientAliveInterval 300
-  ClientAliveCountMax 2
-  X11Forwarding no
-  AllowAgentForwarding no
-  PermitEmptyPasswords no
-
 Notes:
   - Does NOT manage `Port` — that is harden-firewall.sh's concern.
   - Does NOT touch /etc/ssh/sshd_config (package-managed; rewritten on apt
     upgrades). The override file is the supported extension point.
+  - To go stricter than the opt-in flags allow (e.g., per-user AllowUsers
+    rules, KbdInteractiveAuthentication off, ChallengeResponseAuthentication
+    off), write a higher-numbered file like 99-local-strict.conf yourself.
 
 Idempotent: re-runs detect existing identical content and skip the reload.
 EOF
@@ -85,8 +100,10 @@ main() {
   local arg
   for arg in "$@"; do
     case "${arg}" in
-      --dry-run) DRY_RUN=1 ;;
-      --help|-h) usage; exit 0 ;;
+      --no-password-auth) NO_PASSWORD_AUTH=1 ;;
+      --no-root-login)    NO_ROOT_LOGIN=1 ;;
+      --dry-run)          DRY_RUN=1 ;;
+      --help|-h)          usage; exit 0 ;;
       *) log_error "unknown argument: ${arg}"; usage; exit 64 ;;
     esac
   done
@@ -107,13 +124,16 @@ main() {
   # 1. Render desired override content. Heredoc gives us REAL newlines; using
   #    a double-quoted "...\n..." string would write the literal two-character
   #    sequence `\n` and produce an invalid sshd_config.
+  #
+  #    Always-safe defaults are baked in. The two policy-dependent directives
+  #    (PermitRootLogin, PasswordAuthentication) are appended only when the
+  #    matching opt-in flag is passed. This avoids locking out operators who
+  #    bootstrap with password SSH or run install-stack as root.
   local desired
   desired="$(cat <<'EOF'
 # /etc/ssh/sshd_config.d/52-litesoup-harden.conf — managed by litesoup harden-ssh.sh.
 # Re-running harden-ssh.sh may overwrite this file. The 52- numeric prefix
 # ensures these directives override any 50-* drop-in shipped by the distro.
-PermitRootLogin no
-PasswordAuthentication no
 MaxAuthTries 3
 ClientAliveInterval 300
 ClientAliveCountMax 2
@@ -122,6 +142,14 @@ AllowAgentForwarding no
 PermitEmptyPasswords no
 EOF
 )"
+  if [ "${NO_PASSWORD_AUTH}" = "1" ]; then
+    desired="${desired}"$'\n'"PasswordAuthentication no"
+    log_info "harden-ssh: --no-password-auth set, will add PasswordAuthentication no"
+  fi
+  if [ "${NO_ROOT_LOGIN}" = "1" ]; then
+    desired="${desired}"$'\n'"PermitRootLogin no"
+    log_info "harden-ssh: --no-root-login set, will add PermitRootLogin no"
+  fi
   # Trailing newline so the file ends cleanly (POSIX text-file convention,
   # and avoids a `cmp -s` mismatch against a file that already has one).
   desired="${desired}"$'\n'
