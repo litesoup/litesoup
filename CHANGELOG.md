@@ -6,6 +6,31 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-05-14
+
+Two-repo CLI architecture. `install-stack.sh` now copies all scripts to
+`/usr/lib/litesoup/` (stage 15) so the new `litesoup-cli` dispatcher can
+find them at a fixed path regardless of where the repo was cloned. Stage 16
+optionally fetches and installs `litesoup-cli` from
+`litesoup/litesoup-cli` — non-fatal if unreachable. All `codetot-web/litesoup`
+references updated to `litesoup/litesoup` after org transfer.
+
+### Added
+
+- **Stage 15** — `install-stack.sh` copies `install/`, `site/`, `harden/`,
+  `audit/` scripts and `VERSION` to `/usr/lib/litesoup/`. Idempotent:
+  re-running overwrites safely without restarting any service.
+- **Stage 16** — optional, non-fatal `litesoup-cli` install via `curl`.
+  Uses `|| true` so a missing or unreachable CLI installer never fails a
+  core stack install.
+- `total_stages` updated from 14 to 16 (10 with `--skip-hardening`).
+
+### Changed
+
+- All `codetot-web/litesoup` references in `README.md`, `CHANGELOG.md`,
+  `site/site-create.sh`, and acceptance test docs updated to
+  `litesoup/litesoup` after GitHub org transfer.
+
 ## [0.8.0] - 2026-05-03
 
 Documentation overhaul. README slimmed from 237 lines to 62 (no technical
