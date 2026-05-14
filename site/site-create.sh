@@ -238,6 +238,38 @@ download_wordpress() {
   ensure_htaccess
 }
 
+init_submodules() {
+  [ -f "${DOCROOT}/.gitmodules" ] || return 0
+
+  local submodule_count
+  submodule_count=$(grep -c '^\[submodule' "${DOCROOT}/.gitmodules" 2>/dev/null || echo 0)
+  log_info "site-create: found ${submodule_count} submodule(s) — initializing"
+
+  if [ "${DRY_RUN}" = "1" ]; then
+    log_info "[DRYRUN] would git submodule update --init --recursive in ${DOCROOT}"
+    return 0
+  fi
+
+  # When GIT_REPO embeds an HTTPS token (https://TOKEN@github.com/...), rewrite
+  # any ssh (git@github.com:) submodule URLs to HTTPS so the same token works.
+  # The rewrite lives in the repo's local git config and is removed afterwards.
+  local token=""
+  if [[ "${GIT_REPO}" =~ ^https://([^@]+)@github\.com/ ]]; then
+    token="${BASH_REMATCH[1]}"
+    sudo -H -u "${SITE_USER}" git -C "${DOCROOT}" config \
+      "url.https://${token}@github.com/.insteadOf" "git@github.com:"
+  fi
+
+  sudo -H -u "${SITE_USER}" git -C "${DOCROOT}" submodule update --init --recursive \
+    || log_warn "site-create: submodule init failed — check repo access or add SSH key for git@github.com"
+
+  # Remove the credential rewrite so it is not stored in the repo config.
+  if [ -n "${token}" ]; then
+    sudo -H -u "${SITE_USER}" git -C "${DOCROOT}" config --unset \
+      "url.https://${token}@github.com/.insteadOf" 2>/dev/null || true
+  fi
+}
+
 clone_repo() {
   local branch_args=()
   [ -n "${GIT_BRANCH}" ] && branch_args=(--branch "${GIT_BRANCH}")
@@ -254,6 +286,8 @@ clone_repo() {
   else
     sudo -H -u "${SITE_USER}" git clone "${branch_args[@]}" "${GIT_REPO}" "${DOCROOT}"
   fi
+
+  init_submodules
 
   # If the repo ships a wp-config.php, honour it and only inject cache constants.
   # Otherwise create a fresh config the same way download_wordpress does.
