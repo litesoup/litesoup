@@ -46,6 +46,8 @@ PHP_VERSION="${PHP_VERSION_DEFAULT}"
 TLS_MODE="none"
 TLS_EMAIL=""
 POOL_TIER="small"
+GIT_REPO=""
+GIT_BRANCH=""
 
 usage() {
   cat <<'EOF'
@@ -69,6 +71,9 @@ Usage: sudo bash site-create.sh --domain=DOMAIN [--user=NAME] [--php=X.Y] \
                  self-signed: openssl-generated cert at /etc/litesoup/ssl/<d>/
                  none:        HTTP only
   --email=ADDR   Required when --tls=letsencrypt; LE expiry notices go here
+  --git-repo=URL Clone this Git repo into the docroot instead of downloading
+                 a fresh WordPress. Accepts https:// and git@... URLs.
+  --git-branch=B Branch/tag/SHA to check out (default: repo default branch)
 EOF
 }
 
@@ -76,14 +81,16 @@ parse_args() {
   local arg
   for arg in "$@"; do
     case "${arg}" in
-      --domain=*) DOMAIN="${arg#*=}" ;;
-      --user=*)   SITE_USER="${arg#*=}" ;;
-      --php=*)    PHP_VERSION="${arg#*=}" ;;
-      --tier=*)   POOL_TIER="${arg#*=}" ;;
-      --tls=*)    TLS_MODE="${arg#*=}" ;;
-      --email=*)  TLS_EMAIL="${arg#*=}" ;;
-      --dry-run)  DRY_RUN=1 ;;
-      --help|-h)  usage; exit 0 ;;
+      --domain=*)     DOMAIN="${arg#*=}" ;;
+      --user=*)       SITE_USER="${arg#*=}" ;;
+      --php=*)        PHP_VERSION="${arg#*=}" ;;
+      --tier=*)       POOL_TIER="${arg#*=}" ;;
+      --tls=*)        TLS_MODE="${arg#*=}" ;;
+      --email=*)      TLS_EMAIL="${arg#*=}" ;;
+      --git-repo=*)   GIT_REPO="${arg#*=}" ;;
+      --git-branch=*) GIT_BRANCH="${arg#*=}" ;;
+      --dry-run)      DRY_RUN=1 ;;
+      --help|-h)      usage; exit 0 ;;
       *) log_error "unknown argument: ${arg}"; usage; exit 64 ;;
     esac
   done
@@ -109,6 +116,9 @@ parse_args() {
   esac
   if [ "${TLS_MODE}" = "letsencrypt" ] && [ -z "${TLS_EMAIL}" ]; then
     log_error "--tls=letsencrypt requires --email=ADDR"; exit 64
+  fi
+  if [ -n "${GIT_REPO}" ] && ! [[ "${GIT_REPO}" =~ ^(https?://|git@) ]]; then
+    log_error "--git-repo: must start with https://, http://, or git@ (got '${GIT_REPO}')"; exit 64
   fi
 }
 
@@ -201,6 +211,36 @@ download_wordpress() {
   inject_cache_constants
 }
 
+clone_repo() {
+  local branch_args=()
+  [ -n "${GIT_BRANCH}" ] && branch_args=(--branch "${GIT_BRANCH}")
+
+  if [ "${DRY_RUN}" = "1" ]; then
+    log_info "[DRYRUN] would git clone ${GIT_REPO}${GIT_BRANCH:+ (branch: ${GIT_BRANCH})} into ${DOCROOT} as ${SITE_USER}"
+    log_info "[DRYRUN] would create wp-config.php if absent; inject WP_CACHE_KEY_SALT + WP_REDIS_* constants"
+    return 0
+  fi
+
+  if [ -d "${DOCROOT}/.git" ]; then
+    log_info "site-create: repo already cloned at ${DOCROOT} — pulling latest"
+    sudo -H -u "${SITE_USER}" git -C "${DOCROOT}" pull --ff-only
+  else
+    sudo -H -u "${SITE_USER}" git clone "${branch_args[@]}" "${GIT_REPO}" "${DOCROOT}"
+  fi
+
+  # If the repo ships a wp-config.php, honour it and only inject cache constants.
+  # Otherwise create a fresh config the same way download_wordpress does.
+  if [ -f "${DOCROOT}/wp-config.php" ]; then
+    log_info "site-create: wp-config.php found in repo — skipping wp config create"
+    inject_cache_constants
+  else
+    sudo -H -u "${SITE_USER}" wp --path="${DOCROOT}" config create \
+      --dbname="${DB_NAME}" --dbuser="${DB_USER}" --dbpass="${DB_PASS}" \
+      --dbhost="localhost" --dbprefix="wp_" --skip-check
+    inject_cache_constants
+  fi
+}
+
 # Idempotently set a single wp-config constant only if not already defined.
 # Skips silently if the constant already exists -- a re-run of site-create.sh
 # against an existing site must not rotate the salt or change Redis settings,
@@ -282,7 +322,11 @@ main() {
     write_vhost                           # tls=none, HTTP only
   fi
 
-  download_wordpress
+  if [ -n "${GIT_REPO}" ]; then
+    clone_repo
+  else
+    download_wordpress
+  fi
 
   local scheme="http"
   [ "${TLS_MODE}" != "none" ] && scheme="https"
@@ -290,6 +334,7 @@ main() {
   log_info "site-create: docroot ${DOCROOT}"
   log_info "site-create: php ${PHP_VERSION} (socket $(php_fpm_socket_for_user "${SITE_USER}" "${PHP_VERSION}"))"
   log_info "site-create: tls ${TLS_MODE}"
+  [ -n "${GIT_REPO}" ] && log_info "site-create: git ${GIT_REPO}${GIT_BRANCH:+ @ ${GIT_BRANCH}}"
 }
 
 main "$@"
