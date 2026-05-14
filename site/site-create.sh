@@ -251,21 +251,28 @@ init_submodules() {
   fi
 
   # When GIT_REPO embeds an HTTPS token (https://TOKEN@github.com/...), rewrite
-  # any ssh (git@github.com:) submodule URLs to HTTPS so the same token works.
-  # The rewrite lives in the repo's local git config and is removed afterwards.
+  # git@github.com: → https://TOKEN@github.com/ globally for this user so the
+  # same token authenticates private submodules during the clone. The rewrite
+  # must be global (not per-repo) because git submodule update spawns fresh
+  # git-clone processes that don't inherit the parent repo's local config.
+  # Also ensure github.com is in known_hosts so SSH host-key verification
+  # doesn't block the clone even when the rewrite is active.
   local token=""
   if [[ "${GIT_REPO}" =~ ^https://([^@]+)@github\.com/ ]]; then
     token="${BASH_REMATCH[1]}"
-    sudo -H -u "${SITE_USER}" git -C "${DOCROOT}" config \
+    sudo -H -u "${SITE_USER}" mkdir -p "/home/${SITE_USER}/.ssh"
+    sudo -H -u "${SITE_USER}" ssh-keyscan -H github.com \
+      >> "/home/${SITE_USER}/.ssh/known_hosts" 2>/dev/null || true
+    sudo -H -u "${SITE_USER}" git config --global \
       "url.https://${token}@github.com/.insteadOf" "git@github.com:"
   fi
 
   sudo -H -u "${SITE_USER}" git -C "${DOCROOT}" submodule update --init --recursive \
     || log_warn "site-create: submodule init failed — check repo access or add SSH key for git@github.com"
 
-  # Remove the credential rewrite so it is not stored in the repo config.
+  # Remove the credential rewrite immediately so it is never persisted.
   if [ -n "${token}" ]; then
-    sudo -H -u "${SITE_USER}" git -C "${DOCROOT}" config --unset \
+    sudo -H -u "${SITE_USER}" git config --global --unset \
       "url.https://${token}@github.com/.insteadOf" 2>/dev/null || true
   fi
 }
