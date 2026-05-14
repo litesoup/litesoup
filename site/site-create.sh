@@ -334,7 +334,12 @@ main() {
   log_info "site-create: docroot ${DOCROOT}"
   log_info "site-create: php ${PHP_VERSION} (socket $(php_fpm_socket_for_user "${SITE_USER}" "${PHP_VERSION}"))"
   log_info "site-create: tls ${TLS_MODE}"
-  [ -n "${GIT_REPO}" ] && log_info "site-create: git ${GIT_REPO}${GIT_BRANCH:+ @ ${GIT_BRANCH}}"
+  if [ -n "${GIT_REPO}" ]; then
+    # Strip any embedded credentials (https://token@host → https://host) before logging.
+    local git_repo_safe
+    git_repo_safe="$(echo "${GIT_REPO}" | sed 's|https\?://[^@]*@|https://|')"
+    log_info "site-create: git ${git_repo_safe}${GIT_BRANCH:+ @ ${GIT_BRANCH}}"
+  fi
 }
 
 main "$@"
