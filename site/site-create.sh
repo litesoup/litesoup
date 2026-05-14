@@ -136,7 +136,7 @@ create_database() {
   # apache configtest after the DB user was created -- a re-run with a fresh
   # random pw would mismatch what MySQL stored, and `CREATE USER IF NOT EXISTS`
   # silently keeps the OLD password). Otherwise generate a fresh 24-char pw.
-  # Caught on sg10.codetot.org acceptance, fixes codetot-web/litesoup#9.
+  # Caught on sg10.codetot.org acceptance, fixes litesoup/litesoup#9.
   # Path to the existing wp-config.php is overridable via env so bats tests can
   # exercise the reuse branch end-to-end without writing to /home/...
   local existing_wp_config="${LITESOUP_TEST_EXISTING_WP_CONFIG:-/home/${SITE_USER}/webapps/${DOMAIN}/wp-config.php}"

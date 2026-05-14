@@ -126,8 +126,8 @@ main() {
 
   # Stage count: with --skip-hardening, stages 9-14 are skipped (8 total).
   # Without it, all 14 stages run.
-  local total_stages=14
-  [ "${skip_hardening}" = "1" ] && total_stages=8
+  local total_stages=16
+  [ "${skip_hardening}" = "1" ] && total_stages=10
 
   log_info "stage 1/${total_stages}: apache"
   ensure_apache
@@ -193,6 +193,23 @@ main() {
 
   log_info "stage 14/${total_stages}: harden-php (php.ini hardening per version)"
   run_or_dryrun bash "${harden_dir}/harden-php.sh"
+
+  log_info "stage 15/${total_stages}: install scripts to /usr/lib/litesoup"
+  local litesoup_lib=/usr/lib/litesoup
+  local repo_root="${SCRIPT_DIR}/.."
+  install -d -m 0755 "${litesoup_lib}"
+  for dir in install site harden audit; do
+    install -d -m 0755 "${litesoup_lib}/${dir}"
+    find "${repo_root}/${dir}" -maxdepth 1 -name "*.sh" \
+      -exec install -m 0755 {} "${litesoup_lib}/${dir}/" \;
+  done
+  install -m 0644 "${repo_root}/VERSION" "${litesoup_lib}/VERSION"
+
+  log_info "stage 16/${total_stages}: install litesoup-cli (optional)"
+  local cli_install_url="https://raw.githubusercontent.com/litesoup/litesoup-cli/main/install.sh"
+  if command -v curl &>/dev/null; then
+    curl -fsSL "${cli_install_url}" | bash || true
+  fi
 
   log_info "litesoup install-stack: COMPLETE"
 }

@@ -18,7 +18,7 @@ Built for agencies hosting 5–50 client sites per box who don't want runcloud l
 ## 30-second start
 
 ```bash
-git clone https://github.com/codetot-web/litesoup.git
+git clone https://github.com/litesoup/litesoup.git
 cd litesoup
 sudo bash install/install-stack.sh
 sudo bash site/site-create.sh --domain=example.com --tls=letsencrypt --email=ops@example.com
