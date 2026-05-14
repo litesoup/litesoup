@@ -17,7 +17,7 @@ Litesoup is a one-line bash installer that turns a fresh Ubuntu 24.04 server int
 ## Quickstart (Ubuntu 24.04 only)
 
 ```bash
-git clone https://github.com/codetot-web/litesoup.git
+git clone https://github.com/litesoup/litesoup.git
 cd litesoup
 sudo bash install/install-stack.sh                                                              # PHP 8.2 + 8.3 + 8.4 + certbot
 sudo bash site/site-create.sh --domain=blog.example.com --tls=letsencrypt --email=ops@example.com  # HTTPS public site

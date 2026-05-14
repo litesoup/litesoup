@@ -87,7 +87,7 @@ against `sg10.codetot.org` (or any clean Ubuntu 24.04 VPS / Multipass VM):
 
 ```bash
 # On the target host (root or sudo), from a clean checkout:
-git clone https://github.com/codetot-web/litesoup.git
+git clone https://github.com/litesoup/litesoup.git
 cd litesoup
 sudo bash install/install-stack.sh
 

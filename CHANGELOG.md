@@ -12,7 +12,7 @@ Hot-fix release. v0.7.0's `harden/harden-ssh.sh` defaults were too aggressive
 for litesoup's typical deployment pattern (operators SSH as root, some hosts
 allow password auth intentionally). v0.7.1 makes both `PasswordAuthentication
 no` and `PermitRootLogin no` opt-in via flags. Closes
-codetot-web/litesoup#20.
+litesoup/litesoup#20.
 
 ### ⚠️ v0.7.0 → v0.7.1 behavior change (deliberate)
 
@@ -89,7 +89,7 @@ stricter setting, pass the opt-in flags every time.
 ## [0.7.0] - 2026-05-03
 
 Wave 2 of Plan I.E + Plan H: per-service hardening for sshd, Apache, and PHP
-(global ini level). Closes codetot-web/litesoup#18. Three new `harden/`
+(global ini level). Closes litesoup/litesoup#18. Three new `harden/`
 scripts wired into install-stack as stages 12/13/14.
 
 This release was built via multi-agent dispatch with a real fallback story:
@@ -206,7 +206,7 @@ higher-numbered file in `/etc/ssh/sshd_config.d/` after install completes.
 
 Wave 1 of Plan I.E (security basics) + Plan H (litesoup-native audit/harden
 packages, ported from runcloud-bash-scripts conventions). Closes
-codetot-web/litesoup#16. Two new top-level directories: `harden/` (3
+litesoup/litesoup#16. Two new top-level directories: `harden/` (3
 state-changing scripts) and `audit/` (4 read-only check scripts).
 
 This release was built via multi-agent parallel dispatch — 4 Claude subagents
@@ -334,12 +334,12 @@ reuse of the multi-agent pattern.
 ## [0.5.1] - 2026-05-03
 
 Bug-fix release. Unblocks CI and any DO Singapore / blocked-network deployment
-that can't reach `ppa.launchpadcontent.net`. Closes codetot-web/litesoup#14.
+that can't reach `ppa.launchpadcontent.net`. Closes litesoup/litesoup#14.
 First green CI on any branch since the v0.3.0 / Plan I.D merge.
 
 ### Fixed
 
-- **CI / install-stack PPA reachability** (closes codetot-web/litesoup#14):
+- **CI / install-stack PPA reachability** (closes litesoup/litesoup#14):
   `install/lib/apt.sh` `ensure_ppa()` now probes apt-get update for our
   specific URI after `add-apt-repository` succeeds, and dispatches to a
   per-PPA mirror when the URI fails to fetch. Previously: GitHub Actions
@@ -461,7 +461,7 @@ First green CI on any branch since the v0.3.0 / Plan I.D merge.
 ## [0.5.0] - 2026-05-02
 
 Plan I.F: caching infrastructure (Redis + Memcached) plus per-site
-`WP_CACHE_KEY_SALT` injection. Closes codetot-web/litesoup#12.
+`WP_CACHE_KEY_SALT` injection. Closes litesoup/litesoup#12.
 
 This release ships **caching infrastructure**, not WordPress-side
 caching configuration — that's a deliberate split. The stack now
@@ -564,7 +564,7 @@ Bugfix release. Two issues caught by the v0.4.0 acceptance run on real Ubuntu (`
 ### Fixed
 
 - **vhost template comment substitution bug** (commit `cbe1801`, ships as part of v0.4.0 history but documented here): `templates/apache/vhost.conf.tmpl` head comment block contained the literal placeholder strings `__HTTP_REDIRECT__` and `__HTTPS_BLOCK__`. Python's `str.replace()` substitutes inside `#`-comments, so with TLS active the multi-line HTTPS block dumped into a comment line broke the comment boundary and Apache's `apache2ctl configtest` failed (`</VirtualHost> without matching <VirtualHost>`). Net: every `--tls=letsencrypt` or `--tls=self-signed` site since v0.3.0 ships rendered an invalid vhost. Affects v0.3.0 through v0.4.0; fix landed before v0.4.0 published, so users only see this if they cherry-picked from a pre-`cbe1801` commit.
-- **`site-create.sh` DB password idempotency** (closes codetot-web/litesoup#9): `create_database` generated a fresh random password every run AND used `CREATE USER IF NOT EXISTS` which silently keeps the OLD password if the user exists. A site-create that aborted partway (e.g., apache configtest fail, network glitch on certbot) and was re-run wrote a NEW password to `wp-config.php` while MySQL kept the OLD password — WordPress returned 500 with `Error establishing a database connection`. Now: if `wp-config.php` already exists, reuse its password; either way, the SQL emits both `CREATE USER IF NOT EXISTS` AND `ALTER USER ... IDENTIFIED BY '<pw>'` so MySQL always matches `wp-config.php`. Self-healing on retry.
+- **`site-create.sh` DB password idempotency** (closes litesoup/litesoup#9): `create_database` generated a fresh random password every run AND used `CREATE USER IF NOT EXISTS` which silently keeps the OLD password if the user exists. A site-create that aborted partway (e.g., apache configtest fail, network glitch on certbot) and was re-run wrote a NEW password to `wp-config.php` while MySQL kept the OLD password — WordPress returned 500 with `Error establishing a database connection`. Now: if `wp-config.php` already exists, reuse its password; either way, the SQL emits both `CREATE USER IF NOT EXISTS` AND `ALTER USER ... IDENTIFIED BY '<pw>'` so MySQL always matches `wp-config.php`. Self-healing on retry.
 
 ### Added
 
@@ -572,9 +572,9 @@ Bugfix release. Two issues caught by the v0.4.0 acceptance run on real Ubuntu (`
 
 ### Acknowledged false positive (closed)
 
-- codetot-web/litesoup#10 (pool template missing `log_errors`): the `php_admin_flag[log_errors] = on` line IS present in the template at line 22 and renders correctly. The reason `/home/<user>/.logs/php<v>-fpm.error.log` didn't exist on sg10 was that PHP had no fatal error to log — WordPress's 500 was an application-level HTML response. Issue closed.
+- litesoup/litesoup#10 (pool template missing `log_errors`): the `php_admin_flag[log_errors] = on` line IS present in the template at line 22 and renders correctly. The reason `/home/<user>/.logs/php<v>-fpm.error.log` didn't exist on sg10 was that PHP had no fatal error to log — WordPress's 500 was an application-level HTML response. Issue closed.
 
-[0.4.1]: https://github.com/codetot-web/litesoup/releases/tag/v0.4.1
+[0.4.1]: https://github.com/litesoup/litesoup/releases/tag/v0.4.1
 
 ## [0.4.0] - 2026-05-02
 
@@ -611,7 +611,7 @@ Plan I.C: `site-set-php` + per-tier FPM pool sizing. Closes the two pool-managem
 - `site-set-php` doesn't change tier; `site-set-tier` doesn't change PHP version. Run them separately if you need both.
 - Caching (Redis object cache, Apache FastCGI cache, Memcached) → Plan I.F.
 
-[0.4.0]: https://github.com/codetot-web/litesoup/releases/tag/v0.4.0
+[0.4.0]: https://github.com/litesoup/litesoup/releases/tag/v0.4.0
 
 ## [0.3.0] - 2026-05-02
 
@@ -644,7 +644,7 @@ Plan I.D: TLS / Let's Encrypt. `site-create` and the new `site-set-tls` provisio
 - HTTP-01 challenge only — no DNS-01, no wildcard certs.
 - HSTS preload header is set but no automatic preload-list submission.
 
-[0.3.0]: https://github.com/codetot-web/litesoup/releases/tag/v0.3.0
+[0.3.0]: https://github.com/litesoup/litesoup/releases/tag/v0.3.0
 
 ## [0.2.0] - 2026-05-02
 
@@ -682,7 +682,7 @@ Plan I.B: multi-version PHP. Builds directly on v0.1.0 — per-user pool naming 
 
 ## [0.1.0] - 2026-05-01
 
-First public release. Implements [Plan I.A](https://github.com/codetot-web/litesoup/pull/2): a one-line bash installer that turns a fresh Ubuntu 24.04 host into a working WordPress server.
+First public release. Implements [Plan I.A](https://github.com/litesoup/litesoup/pull/2): a one-line bash installer that turns a fresh Ubuntu 24.04 host into a working WordPress server.
 
 ### Added
 
@@ -732,5 +732,5 @@ curl -H 'Host: example.test' http://127.0.0.1/wp-admin/install.php
 - **Plan I.C** — Redis + Memcached + per-site Apache FastCGI cache + Redis object cache auto-config
 - **Plan I.D** — `ufw`, `fail2ban`, `unattended-upgrades`, certbot/TLS, broader hardening, Sigstore-signed releases, distro detection beyond Ubuntu 24.04
 
-[0.2.0]: https://github.com/codetot-web/litesoup/releases/tag/v0.2.0
-[0.1.0]: https://github.com/codetot-web/litesoup/releases/tag/v0.1.0
+[0.2.0]: https://github.com/litesoup/litesoup/releases/tag/v0.2.0
+[0.1.0]: https://github.com/litesoup/litesoup/releases/tag/v0.1.0

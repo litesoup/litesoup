@@ -65,7 +65,7 @@ The harness above only validates `--tls=self-signed` because Docker / Multipass 
 
 ```bash
 # On the target host (root or sudo):
-git clone https://github.com/codetot-web/litesoup.git
+git clone https://github.com/litesoup/litesoup.git
 cd litesoup
 sudo bash install/install-stack.sh --php-versions=8.2
 
