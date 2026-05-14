@@ -197,18 +197,36 @@ main() {
   log_info "stage 15/${total_stages}: install scripts to /usr/lib/litesoup"
   local litesoup_lib=/usr/lib/litesoup
   local repo_root="${SCRIPT_DIR}/.."
-  install -d -m 0755 "${litesoup_lib}"
+  run_or_dryrun install -d -m 0755 "${litesoup_lib}"
   for dir in install site harden audit; do
-    install -d -m 0755 "${litesoup_lib}/${dir}"
-    find "${repo_root}/${dir}" -maxdepth 1 -name "*.sh" \
-      -exec install -m 0755 {} "${litesoup_lib}/${dir}/" \;
+    run_or_dryrun install -d -m 0755 "${litesoup_lib}/${dir}"
+    if [ "${DRY_RUN:-0}" != "1" ]; then
+      find "${repo_root}/${dir}" -maxdepth 1 -name "*.sh" \
+        -exec install -m 0755 {} "${litesoup_lib}/${dir}/" \;
+    else
+      log_info "  [dry-run] would install ${dir}/*.sh → ${litesoup_lib}/${dir}/"
+    fi
   done
-  install -m 0644 "${repo_root}/VERSION" "${litesoup_lib}/VERSION"
+  # install/lib/ is sourced by audit + site scripts via REPO_ROOT/install/lib/
+  if [ "${DRY_RUN:-0}" != "1" ]; then
+    install -d -m 0755 "${litesoup_lib}/install/lib"
+    find "${repo_root}/install/lib" -maxdepth 1 -name "*.sh" \
+      -exec install -m 0644 {} "${litesoup_lib}/install/lib/" \;
+  else
+    log_info "  [dry-run] would install install/lib/*.sh → ${litesoup_lib}/install/lib/"
+  fi
+  # templates/ is required by site scripts (_vhost_render.sh, ensure_php_pool_for_user)
+  if [ "${DRY_RUN:-0}" != "1" ]; then
+    cp -r "${repo_root}/templates" "${litesoup_lib}/"
+  else
+    log_info "  [dry-run] would copy templates/ → ${litesoup_lib}/templates/"
+  fi
+  run_or_dryrun install -m 0644 "${repo_root}/VERSION" "${litesoup_lib}/VERSION"
 
   log_info "stage 16/${total_stages}: install litesoup-cli (optional)"
   local cli_install_url="https://raw.githubusercontent.com/litesoup/litesoup-cli/main/install.sh"
   if command -v curl &>/dev/null; then
-    curl -fsSL "${cli_install_url}" | bash || true
+    run_or_dryrun bash -c "curl -fsSL '${cli_install_url}' | bash" || true
   fi
 
   log_info "litesoup install-stack: COMPLETE"
