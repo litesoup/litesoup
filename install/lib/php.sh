@@ -177,7 +177,18 @@ ensure_php_fpm() {
     # re-run), the && short-circuits and the function returns 1, which
     # trips set -e in the caller. Use explicit if/fi instead.
     if [ "${disabled_any}" = "1" ]; then
-      run_or_dryrun systemctl reload "php${v}-fpm"
+      # Reload fails with exit 78 (CONFIG) when no pools remain. Stop+disable
+      # instead; ensure_php_pool_for_user will re-enable when the first pool
+      # is written.
+      local remaining_pools
+      remaining_pools=$(find "${pool_dir}" -maxdepth 1 -type f -name '*.conf' 2>/dev/null | wc -l)
+      if [ "${remaining_pools}" -gt 0 ]; then
+        run_or_dryrun systemctl reload "php${v}-fpm"
+      else
+        run_or_dryrun systemctl stop "php${v}-fpm"
+        run_or_dryrun systemctl disable "php${v}-fpm"
+        log_info "php: php${v}-fpm stopped (no pools yet; will start when first pool is created)"
+      fi
     fi
   fi
 }
@@ -280,8 +291,13 @@ open('${conf}', 'w').write(out)
   fi
   rm -f "${fpm_test_err}"
 
-  run_or_dryrun systemctl reload "php${v}-fpm" \
-    || run_or_dryrun systemctl restart "php${v}-fpm"
+  # Re-enable + start if the service was stopped (no pools before this one).
+  if ! systemctl is-enabled --quiet "php${v}-fpm" 2>/dev/null; then
+    run_or_dryrun systemctl enable --now "php${v}-fpm"
+  else
+    run_or_dryrun systemctl reload "php${v}-fpm" \
+      || run_or_dryrun systemctl restart "php${v}-fpm"
+  fi
 }
 
 # _php_pool_current_tier CONF_PATH -- inspect a rendered pool conf and echo
