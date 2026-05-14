@@ -198,6 +198,32 @@ create_docroot() {
   DOCROOT="${docroot}"
 }
 
+ensure_htaccess() {
+  local htaccess="${DOCROOT}/.htaccess"
+  if [ -f "${htaccess}" ]; then
+    log_info "site-create: .htaccess already present — skipping"
+    return 0
+  fi
+  if [ "${DRY_RUN}" = "1" ]; then
+    log_info "[DRYRUN] would write default WordPress .htaccess to ${htaccess}"
+    return 0
+  fi
+  sudo -H -u "${SITE_USER}" tee "${htaccess}" >/dev/null <<'HTACCESS'
+# BEGIN WordPress
+<IfModule mod_rewrite.c>
+RewriteEngine On
+RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+RewriteBase /
+RewriteRule ^index\.php$ - [L]
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule . /index.php [L]
+</IfModule>
+# END WordPress
+HTACCESS
+  log_info "site-create: wrote default WordPress .htaccess"
+}
+
 download_wordpress() {
   if [ "${DRY_RUN}" = "1" ]; then
     log_info "[DRYRUN] would wp core download into ${DOCROOT} as ${SITE_USER}"
@@ -209,6 +235,7 @@ download_wordpress() {
     --dbname="${DB_NAME}" --dbuser="${DB_USER}" --dbpass="${DB_PASS}" \
     --dbhost="localhost" --dbprefix="wp_" --skip-check
   inject_cache_constants
+  ensure_htaccess
 }
 
 clone_repo() {
@@ -239,6 +266,7 @@ clone_repo() {
       --dbhost="localhost" --dbprefix="wp_" --skip-check
     inject_cache_constants
   fi
+  ensure_htaccess
 }
 
 # Idempotently set a single wp-config constant only if not already defined.
