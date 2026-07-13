@@ -108,6 +108,7 @@ main() {
 # Managed by litesoup harden/harden-apache.sh.
 # Re-runs may overwrite. Edit conf-available/99-local-* to override.
 
+ServerName 127.0.0.1
 ServerTokens Prod
 ServerSignature Off
 TraceEnable Off

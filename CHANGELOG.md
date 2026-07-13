@@ -6,6 +6,36 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-07-14
+
+Install-stack hardening fixes discovered during jp1.codetot.org provisioning.
+Creates per-user FPM pools for every installed PHP version (was only creating
+for the default 8.2). Apache `ServerName` is now set globally to suppress the
+`AH00558` FQDN warning. MariaDB writes `/etc/mysql/debian.cnf` so the
+debian-start maintenance script doesn't spam "Access denied" on every service
+start. CLI install script is downloaded to a temp file before execution,
+avoiding the `BASH_SOURCE[0]: unbound variable` error from the curl-pipe pattern.
+
+### Fixed
+
+- **install-stack stage 3** — `ensure_php_pool_for_user` now loops over all
+  requested PHP versions instead of only `PHP_VERSION_DEFAULT` (8.2). On a
+  fresh install with PHP 8.2, 8.3, 8.4, pools for 8.3 and 8.4 were missing,
+  leaving php8.3-fpm and php8.4-fpm unable to start ("No pool defined").
+  (`install/install-stack.sh`)
+- **harden-apache** — added `ServerName 127.0.0.1` to the managed
+  `52-litesoup-harden.conf` snippet, suppressing the `AH00558` warning on
+  hosts without a global ServerName. (`harden/harden-apache.sh`)
+- **mariadb** — after generating and applying the root password, the script
+  now writes `/etc/mysql/debian.cnf` with the same credentials. The
+  debian-start maintenance script (runs on every service start) reads from
+  this file, so "Access denied for user 'root'@'localhost'" errors are
+  eliminated. (`install/lib/mariadb.sh`)
+- **install-stack stage 16** — CLI installer is now downloaded to a temp file
+  (`mktemp`) and executed with `bash /tmp/...` instead of piping `curl | bash`.
+  The previous pattern triggered `BASH_SOURCE[0]: unbound variable` because
+  `BASH_SOURCE` is unset in piped stdin contexts. (`install/install-stack.sh`)
+
 ## [0.8.1] - 2026-05-14
 
 Two-repo CLI architecture. `install-stack.sh` now copies all scripts to
@@ -879,5 +909,13 @@ curl -H 'Host: example.test' http://127.0.0.1/wp-admin/install.php
 - **Plan I.C** — Redis + Memcached + per-site Apache FastCGI cache + Redis object cache auto-config
 - **Plan I.D** — `ufw`, `fail2ban`, `unattended-upgrades`, certbot/TLS, broader hardening, Sigstore-signed releases, distro detection beyond Ubuntu 24.04
 
+[0.8.2]: https://github.com/litesoup/litesoup/releases/tag/v0.8.2
+[0.8.1]: https://github.com/litesoup/litesoup/releases/tag/v0.8.1
+[0.8.0]: https://github.com/litesoup/litesoup/releases/tag/v0.8.0
+[0.7.1]: https://github.com/litesoup/litesoup/releases/tag/v0.7.1
+[0.7.0]: https://github.com/litesoup/litesoup/releases/tag/v0.7.0
+[0.6.0]: https://github.com/litesoup/litesoup/releases/tag/v0.6.0
+[0.5.1]: https://github.com/litesoup/litesoup/releases/tag/v0.5.1
+[0.5.0]: https://github.com/litesoup/litesoup/releases/tag/v0.5.0
 [0.2.0]: https://github.com/litesoup/litesoup/releases/tag/v0.2.0
 [0.1.0]: https://github.com/litesoup/litesoup/releases/tag/v0.1.0
