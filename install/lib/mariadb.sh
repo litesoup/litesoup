@@ -44,6 +44,10 @@ SQL
       umask 077
       printf '[client]\nuser=root\npassword=%s\n' "${pw}" > "${MARIADB_ROOT_PW_FILE}"
       chmod 600 "${MARIADB_ROOT_PW_FILE}"
+      # Write /etc/mysql/debian.cnf so the mariadb debian-start maintenance
+      # script can run without "Access denied" noise on every service start.
+      printf '[client]\nuser=root\npassword=%s\nhost=localhost\n' "${pw}" > /etc/mysql/debian.cnf
+      chmod 640 /etc/mysql/debian.cnf
     fi
   else
     log_info "mariadb: root credentials already configured (${MARIADB_ROOT_PW_FILE})"

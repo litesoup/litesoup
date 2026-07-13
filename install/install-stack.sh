@@ -138,9 +138,12 @@ main() {
     ensure_php_fpm "${v}"
   done
 
-  log_info "stage 3/${total_stages}: default site owner (${DEFAULT_SITE_USER}) + per-user pool @ ${PHP_VERSION_DEFAULT}"
+  log_info "stage 3/${total_stages}: default site owner (${DEFAULT_SITE_USER}) + per-user pool(s)"
   ensure_user "${DEFAULT_SITE_USER}"
-  ensure_php_pool_for_user "${DEFAULT_SITE_USER}" "${PHP_VERSION_DEFAULT}"
+  for _pv in "${php_versions[@]}"; do
+    log_info "  -> pool ${DEFAULT_SITE_USER} @ php ${_pv}"
+    ensure_php_pool_for_user "${DEFAULT_SITE_USER}" "${_pv}"
+  done
 
   log_info "stage 4/${total_stages}: mariadb"
   ensure_mariadb
@@ -226,7 +229,14 @@ main() {
   log_info "stage 16/${total_stages}: install litesoup-cli (optional)"
   local cli_install_url="https://raw.githubusercontent.com/litesoup/litesoup-cli/main/install.sh"
   if command -v curl &>/dev/null; then
-    run_or_dryrun bash -c "curl -fsSL '${cli_install_url}' | bash" || true
+    local _cli_tmp
+    _cli_tmp="$(mktemp)"
+    if curl -fsSL "${cli_install_url}" -o "${_cli_tmp}" 2>/dev/null; then
+      run_or_dryrun bash "${_cli_tmp}" || true
+    else
+      log_info "litesoup-cli install script unavailable — skipping"
+    fi
+    rm -f "${_cli_tmp}"
   fi
 
   log_info "litesoup install-stack: COMPLETE"
