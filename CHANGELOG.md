@@ -8,7 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [0.8.2] - 2026-07-14
 
-Install-stack hardening fixes discovered during jp1.codetot.org provisioning.
+Install-stack hardening fixes discovered during production provisioning.
 Creates per-user FPM pools for every installed PHP version (was only creating
 for the default 8.2). Apache `ServerName` is now set globally to suppress the
 `AH00558` FQDN warning. MariaDB writes `/etc/mysql/debian.cnf` so the
