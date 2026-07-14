@@ -3,39 +3,55 @@
 # used by site-create.sh and site-set-tls.sh. Not meant to be executed directly.
 #
 # write_vhost expects these vars in scope:
-#   DOMAIN, DOCROOT, SITE_USER, PHP_VERSION, TLS_MODE, REPO_ROOT, DRY_RUN
+#   DOMAIN, DOCROOT, VHOST_DOCROOT, SITE_USER, PHP_VERSION, TLS_MODE, REPO_ROOT, DRY_RUN
 
 [ -n "${LITESOUP_VHOST_RENDER_SH:-}" ] && return 0
 LITESOUP_VHOST_RENDER_SH=1
 
+# Locate a site's Apache vhost config file. Checks sites-available/ first
+# (canonical Apache convention — used by write_vhost + a2ensite), then falls
+# back to sites-enabled/ (some configurations write directly to enabled).
+_find_vhost() {
+  local domain="${1:?domain required}"
+  for dir in /etc/apache2/sites-available /etc/apache2/sites-enabled; do
+    local conf="${dir}/${domain}.conf"
+    if [ -f "${conf}" ]; then
+      printf '%s' "${conf}"
+      return 0
+    fi
+  done
+  return 1
+}
+
 # Look up the system user that owns the site by reading the FPM SetHandler line
 # from the Apache vhost. Echoes the user; returns 1 if vhost does not exist.
 existing_site_owner() {
-  local vhost="/etc/apache2/sites-available/${1:?domain required}.conf"
-  [ -f "${vhost}" ] || return 1
+  local vhost
+  vhost="$(_find_vhost "${1:?domain required}")" || return 1
   grep -oE '/run/php/[^-]+-php[0-9.]+-fpm\.sock' "${vhost}" | head -1 \
     | sed -E 's|/run/php/([^-]+)-php.*|\1|'
 }
 
 # Echo the PHP version pinned in the existing vhost.
 existing_site_php() {
-  local vhost="/etc/apache2/sites-available/${1:?domain required}.conf"
-  [ -f "${vhost}" ] || return 1
+  local vhost
+  vhost="$(_find_vhost "${1:?domain required}")" || return 1
   grep -oE '/run/php/[^-]+-php[0-9.]+-fpm\.sock' "${vhost}" | head -1 \
     | sed -E 's|.*-php([0-9.]+)-fpm\.sock|\1|'
 }
 
 # Echo the docroot from the existing vhost.
 existing_site_docroot() {
-  local vhost="/etc/apache2/sites-available/${1:?domain required}.conf"
-  [ -f "${vhost}" ] || return 1
+  local vhost
+  vhost="$(_find_vhost "${1:?domain required}")" || return 1
   grep -oE 'DocumentRoot[[:space:]]+\S+' "${vhost}" | head -1 | awk '{print $2}'
 }
 
 # write_vhost -- render /etc/apache2/sites-available/${DOMAIN}.conf from the
 # template. Substitutes __HTTP_REDIRECT__ and __HTTPS_BLOCK__ to empty strings
 # when TLS_MODE is none, populates them when TLS_MODE is letsencrypt or
-# self-signed.
+# self-signed. Uses VHOST_DOCROOT (which may differ from DOCROOT for
+# Laravel/generic frameworks where DocumentRoot points to /public).
 write_vhost() {
   local socket vhost http_redirect="" https_block="" cert_paths cert key
   socket="$(php_fpm_socket_for_user "${SITE_USER}" "${PHP_VERSION}")"
@@ -50,7 +66,7 @@ write_vhost() {
     https_block=$(cat <<HTTPS
 <VirtualHost *:443>
     ServerName ${DOMAIN}
-    DocumentRoot ${DOCROOT}
+    DocumentRoot ${VHOST_DOCROOT}
 
     Protocols h2 http/1.1
 
@@ -65,7 +81,7 @@ write_vhost() {
     Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
     Header edit Set-Cookie ^(.*)$ "\$1; Secure"
 
-    <Directory ${DOCROOT}>
+    <Directory ${VHOST_DOCROOT}>
         Options -Indexes +FollowSymLinks
         AllowOverride All
         Require all granted
@@ -94,7 +110,7 @@ HTTPS
 tmpl = open('${REPO_ROOT}/templates/apache/vhost.conf.tmpl').read()
 out = (tmpl
   .replace('__DOMAIN__',         '''${DOMAIN}''')
-  .replace('__DOCROOT__',        '''${DOCROOT}''')
+  .replace('__DOCROOT__',        '''${VHOST_DOCROOT}''')
   .replace('__FPM_SOCKET__',     '''${socket}''')
   .replace('__HTTP_REDIRECT__',  '''${http_redirect}''')
   .replace('__HTTPS_BLOCK__',    '''${https_block}''')

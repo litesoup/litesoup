@@ -12,7 +12,7 @@
     # even when the rest of the site redirects to HTTPS.
     Alias /.well-known/acme-challenge/ __DOCROOT__/.well-known/acme-challenge/
     <Directory "__DOCROOT__/.well-known/acme-challenge/">
-        Options None
+        Options +FollowSymLinks
         AllowOverride None
         Require all granted
     </Directory>
