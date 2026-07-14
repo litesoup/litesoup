@@ -99,6 +99,7 @@ main() {
   SITE_USER="${owner}"
   # shellcheck disable=SC2034  # consumed by write_vhost via scope
   DOCROOT="$(existing_site_docroot "${DOMAIN}")"
+  VHOST_DOCROOT="${DOCROOT}"
   detect_tls_mode
 
   local old_php

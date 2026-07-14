@@ -85,6 +85,7 @@ main() {
   SITE_USER="${owner}"
   PHP_VERSION="$(existing_site_php "${DOMAIN}")"
   DOCROOT="$(existing_site_docroot "${DOMAIN}")"
+  VHOST_DOCROOT="${DOCROOT}"
 
   log_info "site-set-tls: ${DOMAIN} (owner=${SITE_USER}, php=${PHP_VERSION}, tls=${TLS_MODE})"
 
