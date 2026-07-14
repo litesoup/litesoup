@@ -271,7 +271,7 @@ main() {
   # operator is ready).
   local backup_stage=$(( total_stages + 1 ))
   log_info "stage ${backup_stage}/${total_stages}: backup scripts + notification"
-  local repo_backup="${REPO_ROOT}/backup"
+  local repo_backup="${repo_root}/backup"
   if [ -d "${repo_backup}" ]; then
     run_or_dryrun install -d -m 0755 "${litesoup_lib}/backup/lib"
     # shell scripts (entry points)
@@ -283,8 +283,8 @@ main() {
       run_or_dryrun install -m 0644 "${_f}" "${litesoup_lib}/backup/lib/"
     done
     # notify.sh (shared between install and backup)
-    if [ -f "${REPO_ROOT}/install/lib/notify.sh" ]; then
-      run_or_dryrun install -m 0644 "${REPO_ROOT}/install/lib/notify.sh" "${litesoup_lib}/install/lib/"
+    if [ -f "${repo_root}/install/lib/notify.sh" ]; then
+      run_or_dryrun install -m 0644 "${repo_root}/install/lib/notify.sh" "${litesoup_lib}/install/lib/"
     fi
   else
     log_info "backup scripts not found (backup/ directory missing) - skipping"
