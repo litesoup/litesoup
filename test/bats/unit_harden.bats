@@ -159,13 +159,15 @@ EOF
 @test "harden-fail2ban detect_ssh_port matches harden-firewall logic" {
   # The two scripts MUST agree on the SSH port; otherwise the firewall
   # opens one port and fail2ban watches a different one. This test ensures
-  # the awk parser is byte-identical between both files.
-  local fw_awk fb_awk
-  fw_awk="$(awk '/detect_ssh_port/,/^}/' "${REPO_ROOT}/harden/harden-firewall.sh" | grep -A2 awk | head -7)"
-  fb_awk="$(awk '/detect_ssh_port/,/^}/' "${REPO_ROOT}/harden/harden-fail2ban.sh" | grep -A2 awk | head -7)"
-  [ -n "${fw_awk}" ]
-  [ -n "${fb_awk}" ]
-  [ "${fw_awk}" = "${fb_awk}" ]
+  # the detect_ssh_port function (normalized: comments stripped) is
+  # identical between both files. Guards the entire function body,
+  # not just the awk fallback parser.
+  local fw_func fb_func
+  fw_func="$(awk '/^detect_ssh_port/,/^}/' "${REPO_ROOT}/harden/harden-firewall.sh" | grep -v '^\s*#' )"
+  fb_func="$(awk '/^detect_ssh_port/,/^}/' "${REPO_ROOT}/harden/harden-fail2ban.sh" | grep -v '^\s*#' )"
+  [ -n "${fw_func}" ]
+  [ -n "${fb_func}" ]
+  [ "${fw_func}" = "${fb_func}" ]
 }
 
 # --- script smoke: --help works on each harden script (no root needed) ---

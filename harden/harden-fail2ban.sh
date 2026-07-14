@@ -11,28 +11,35 @@ SSHD_JAIL="${JAIL_DIR}/litesoup-sshd.local"
 APACHE_JAIL="${JAIL_DIR}/litesoup-apache-auth.local"
 APACHE_LOG_DIR="/var/log/apache2"
 
-# Parse the active sshd Port from /etc/ssh/sshd_config. Picks the LAST
-# uncommented `^Port N` directive (sshd's own precedence rule); falls back
-# to 22 if the file is missing or has no Port line. Same logic as
-# harden-firewall.sh -- if these diverge the firewall opens one port while
-# fail2ban watches a different one (= no SSH brute-force protection).
+# Detect the active sshd Port from the FULL config chain, including
+# /etc/ssh/sshd_config.d/*.conf drop-ins (where cloud-init / VPS
+# providers commonly set a non-standard port). Must match the same
+# function in harden-firewall.sh — if these diverge, the firewall
+# opens one port while fail2ban watches a different one (= no SSH
+# brute-force protection).
+#
+# Primary method: `sshd -T` (resolves the full include chain).
+# Fallback: manual awk over /etc/ssh/sshd_config.
+# Ultimate fallback: 22.
 detect_ssh_port() {
-  local conf="/etc/ssh/sshd_config"
   local port=""
-  if [ -r "${conf}" ]; then
-    port="$(awk '
-      /^[[:space:]]*#/ { next }
-      {
-        sub(/^[[:space:]]+/, "")
-        if ($1 == "Port" && $2 ~ /^[0-9]+$/) last = $2
-      }
-      END { if (last != "") print last }
-    ' "${conf}")"
+  if command -v sshd &>/dev/null; then
+    port="$(sshd -T 2>/dev/null | sed -n 's/^port //p' | tail -1)"
   fi
   if [ -z "${port}" ]; then
-    port="22"
+    local conf="/etc/ssh/sshd_config"
+    if [ -r "${conf}" ]; then
+      port="$(awk '
+        /^[[:space:]]*#/ { next }
+        {
+          sub(/^[[:space:]]+/, "")
+          if ($1 == "Port" && $2 ~ /^[0-9]+$/) last = $2
+        }
+        END { if (last != "") print last }
+      ' "${conf}")"
+    fi
   fi
-  printf '%s' "${port}"
+  printf '%s' "${port:-22}"
 }
 
 usage() {
