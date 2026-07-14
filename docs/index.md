@@ -15,13 +15,27 @@ Built for agencies hosting 5–50 sites per box who don't want to pay $25/month 
 ## 30-second start
 
 ```bash
+# Quick install (one-liner):
+curl -fsSL https://raw.githubusercontent.com/litesoup/litesoup/main/install.sh | sudo bash
+```
+
+That's a working WordPress stack. ~10-15 minutes.
+
+Once the stack is installed, clone the repo for site management:
+
+```bash
 git clone https://github.com/codetot-web/litesoup.git
 cd litesoup
-sudo bash install/install-stack.sh
 sudo bash site/site-create.sh --domain=example.com --tls=letsencrypt --email=ops@example.com
 ```
 
-That's a working HTTPS WordPress site. ~15 minutes total.
+Prefer to inspect before installing? Clone the full repo instead:
+
+```bash
+git clone https://github.com/codetot-web/litesoup.git
+cd litesoup
+sudo bash install/install-stack.sh
+```
 
 ## Who this is for
 

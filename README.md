@@ -18,19 +18,37 @@ Built for agencies hosting 5–50 client sites per box who don't want runcloud l
 ## 30-second start
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/litesoup/litesoup/main/install.sh | sudo bash
+```
+
+That's a working WordPress stack. ~10–15 min on a fresh Ubuntu 24.04 box.
+
+Once the stack is installed, create your first site:
+
+```bash
+# Clone the repo (needed for site scripts which source local lib files)
 git clone https://github.com/litesoup/litesoup.git
 cd litesoup
-sudo bash install/install-stack.sh
 sudo bash site/site-create.sh --domain=example.com --tls=letsencrypt --email=ops@example.com
 ```
 
-That's a working HTTPS WordPress site. ~15 min total on a fresh Ubuntu 24.04 box.
+Prefer to run the full stack install from a local clone instead?
+
+```bash
+git clone https://github.com/litesoup/litesoup.git
+cd litesoup
+sudo bash install/install-stack.sh
+```
 
 ## Networks where launchpad is blocked
 
 If `ppa.launchpadcontent.net` is unreachable from your host (some DigitalOcean regions, GitHub Actions runners), add the env var:
 
 ```bash
+# With quick install:
+LITESOUP_PPA_FORCE_MIRROR=cloudpanel curl -fsSL https://raw.githubusercontent.com/litesoup/litesoup/main/install.sh | sudo bash
+
+# From a local clone:
 LITESOUP_PPA_FORCE_MIRROR=cloudpanel sudo bash install/install-stack.sh
 ```
 

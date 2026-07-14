@@ -18,6 +18,19 @@ Get a working WordPress stack on a fresh Ubuntu 24.04 server in about 10 to 15 m
 ## One-line install
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/litesoup/litesoup/main/install.sh | sudo bash
+```
+
+The wrapper script shallow-clones the repo and runs `install/install-stack.sh`, then cleans up. All flags work the same way:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/litesoup/litesoup/main/install.sh | sudo bash -s -- --php-versions=8.3,8.4 --redis-maxmemory=1gb
+LITESOUP_PPA_FORCE_MIRROR=cloudpanel curl -fsSL ... | sudo bash
+```
+
+**Or from a local clone** (inspect the code first):
+
+```bash
 git clone https://github.com/codetot-web/litesoup.git
 cd litesoup
 sudo bash install/install-stack.sh
@@ -42,6 +55,10 @@ The installer also creates a default site owner `litesoup` at `/home/litesoup/we
 ## Common flags
 
 ```bash
+# With quick install:
+curl -fsSL https://raw.githubusercontent.com/litesoup/litesoup/main/install.sh | sudo bash -s -- --help
+
+# From a local clone:
 sudo bash install/install-stack.sh --help
 ```
 
@@ -56,6 +73,10 @@ The flags you'll actually use:
 Example:
 
 ```bash
+# Quick install with custom PHP version and Redis memory:
+curl -fsSL https://raw.githubusercontent.com/litesoup/litesoup/main/install.sh | sudo bash -s -- --php-versions=8.3,8.4 --redis-maxmemory=1gb
+
+# Same from a local clone:
 sudo bash install/install-stack.sh --php-versions=8.3,8.4 --redis-maxmemory=1gb
 ```
 
@@ -66,6 +87,10 @@ Some networks can't reach `ppa.launchpadcontent.net` — most notably DigitalOce
 If you already know your host can't reach launchpad, skip the probe:
 
 ```bash
+# With quick install:
+LITESOUP_PPA_FORCE_MIRROR=cloudpanel curl -fsSL https://raw.githubusercontent.com/litesoup/litesoup/main/install.sh | sudo bash
+
+# From a local clone:
 LITESOUP_PPA_FORCE_MIRROR=cloudpanel sudo bash install/install-stack.sh
 ```
 
