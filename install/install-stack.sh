@@ -124,10 +124,10 @@ main() {
   require_root
   require_ubuntu_2404
 
-  # Stage count: with --skip-hardening, stages 9-14 are skipped (8 total).
-  # Without it, all 14 stages run.
-  local total_stages=16
-  [ "${skip_hardening}" = "1" ] && total_stages=10
+  # Stage count: without --skip-hardening, composer (9) + node (10) + hardening/stages 11-18 run.
+  # With --skip-hardening, stages 9-12 run (composer + node + install scripts + litesoup-cli).
+  local total_stages=18
+  [ "${skip_hardening}" = "1" ] && total_stages=12
 
   log_info "stage 1/${total_stages}: apache"
   ensure_apache
@@ -160,6 +160,33 @@ main() {
   log_info "stage 8/${total_stages}: memcached"
   ensure_memcached
 
+  log_info "stage 9/${total_stages}: composer"
+  if ! command -v composer &>/dev/null; then
+    run_or_dryrun apt_install composer
+  else
+    log_info "  -> composer already installed"
+  fi
+
+  log_info "stage 10/${total_stages}: node.js + npm"
+  if ! command -v node &>/dev/null; then
+    # Nodesource setup for Node.js 22.x LTS
+    if [ "${DRY_RUN:-0}" != "1" ]; then
+      if ! command -v node &>/dev/null; then
+        apt_install ca-certificates curl gnupg
+        mkdir -p /etc/apt/keyrings
+        curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+          | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg 2>/dev/null || true
+        echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" \
+          > /etc/apt/sources.list.d/nodesource.list
+        apt-get update -qq && apt_install nodejs
+      fi
+    else
+      log_info "  [dry-run] would install nodejs from nodesource"
+    fi
+  else
+    log_info "  -> node $(node --version 2>/dev/null || echo 'unknown') already installed"
+  fi
+
   if [ "${skip_hardening}" = "1" ]; then
     log_info "litesoup install-stack: COMPLETE (hardening skipped via --skip-hardening)"
     return 0
@@ -172,32 +199,32 @@ main() {
   # ordering consistent with traditional sysadmin practice.
   local harden_dir="${SCRIPT_DIR}/../harden"
 
-  log_info "stage 9/${total_stages}: harden-firewall (ufw)"
+  log_info "stage 11/${total_stages}: harden-firewall (ufw)"
   run_or_dryrun bash "${harden_dir}/harden-firewall.sh"
 
-  log_info "stage 10/${total_stages}: harden-fail2ban"
+  log_info "stage 12/${total_stages}: harden-fail2ban"
   run_or_dryrun bash "${harden_dir}/harden-fail2ban.sh"
 
-  log_info "stage 11/${total_stages}: harden-unattended-upgrades"
+  log_info "stage 13/${total_stages}: harden-unattended-upgrades"
   run_or_dryrun bash "${harden_dir}/harden-unattended-upgrades.sh"
 
-  # Hardening stages 12-14 added in v0.7.0. CRITICAL: harden-ssh disables
+  # Hardening stages 14-16 added in v0.7.0. CRITICAL: harden-ssh disables
   # PasswordAuthentication. If you bootstrap a host via password-only SSH
   # (e.g., fresh DO droplet's root password), running install-stack will
   # lock you out on next session. Always set up an SSH key BEFORE running
   # install-stack on a new host. The script writes /etc/ssh/sshd_config.d/
   # so you can re-enable password auth via a higher-numbered file if you
   # explicitly want it (see /etc/ssh/sshd_config.d/52-litesoup-harden.conf).
-  log_info "stage 12/${total_stages}: harden-ssh (always-safe defaults; --no-password-auth / --no-root-login are opt-in)"
+  log_info "stage 14/${total_stages}: harden-ssh (always-safe defaults; --no-password-auth / --no-root-login are opt-in)"
   run_or_dryrun bash "${harden_dir}/harden-ssh.sh"
 
-  log_info "stage 13/${total_stages}: harden-apache (ServerTokens, headers, mod_status local-only)"
+  log_info "stage 15/${total_stages}: harden-apache (ServerTokens, headers, mod_status local-only)"
   run_or_dryrun bash "${harden_dir}/harden-apache.sh"
 
-  log_info "stage 14/${total_stages}: harden-php (php.ini hardening per version)"
+  log_info "stage 16/${total_stages}: harden-php (php.ini hardening per version)"
   run_or_dryrun bash "${harden_dir}/harden-php.sh"
 
-  log_info "stage 15/${total_stages}: install scripts to /usr/lib/litesoup"
+  log_info "stage 17/${total_stages}: install scripts to /usr/lib/litesoup"
   local litesoup_lib=/usr/lib/litesoup
   local repo_root="${SCRIPT_DIR}/.."
   run_or_dryrun install -d -m 0755 "${litesoup_lib}"
@@ -226,7 +253,7 @@ main() {
   fi
   run_or_dryrun install -m 0644 "${repo_root}/VERSION" "${litesoup_lib}/VERSION"
 
-  log_info "stage 16/${total_stages}: install litesoup-cli (optional)"
+  log_info "stage 18/${total_stages}: install litesoup-cli (optional)"
   local cli_install_url="https://raw.githubusercontent.com/litesoup/litesoup-cli/main/install.sh"
   if command -v curl &>/dev/null; then
     local _cli_tmp
@@ -237,6 +264,30 @@ main() {
       log_info "litesoup-cli install script unavailable — skipping"
     fi
     rm -f "${_cli_tmp}"
+  fi
+
+  # Stage 19: install backup scripts + notify helper (no root access to
+  # S3/email config needed — that's done by backup-install.sh when the
+  # operator is ready).
+  local backup_stage=$(( total_stages + 1 ))
+  log_info "stage ${backup_stage}/${total_stages}: backup scripts + notification"
+  local repo_backup="${REPO_ROOT}/backup"
+  if [ -d "${repo_backup}" ]; then
+    run_or_dryrun install -d -m 0755 "${litesoup_lib}/backup/lib"
+    # shell scripts (entry points)
+    for _f in "${repo_backup}"/*.sh; do
+      run_or_dryrun install -m 0755 "${_f}" "${litesoup_lib}/backup/"
+    done
+    # lib scripts
+    for _f in "${repo_backup}/lib/"*.sh; do
+      run_or_dryrun install -m 0644 "${_f}" "${litesoup_lib}/backup/lib/"
+    done
+    # notify.sh (shared between install and backup)
+    if [ -f "${REPO_ROOT}/install/lib/notify.sh" ]; then
+      run_or_dryrun install -m 0644 "${REPO_ROOT}/install/lib/notify.sh" "${litesoup_lib}/install/lib/"
+    fi
+  else
+    log_info "backup scripts not found (backup/ directory missing) - skipping"
   fi
 
   log_info "litesoup install-stack: COMPLETE"
