@@ -188,19 +188,17 @@ main() {
   fi
 
   if [ "${skip_hardening}" = "1" ]; then
-    log_info "litesoup install-stack: COMPLETE (hardening skipped via --skip-hardening)"
-    return 0
-  fi
+    log_info "litesoup install-stack: hardening stages skipped via --skip-hardening"
+  else
+    # Hardening stages must run AFTER services are up: harden-fail2ban watches
+    # /var/log/apache2/*error.log which only exists once Apache is installed
+    # (stage 1). harden-firewall opens 80/443 — fine to do before or after
+    # Apache, but doing it after keeps "services first, lock down second"
+    # ordering consistent with traditional sysadmin practice.
+    local harden_dir="${SCRIPT_DIR}/../harden"
 
-  # Hardening stages must run AFTER services are up: harden-fail2ban watches
-  # /var/log/apache2/*error.log which only exists once Apache is installed
-  # (stage 1). harden-firewall opens 80/443 — fine to do before or after
-  # Apache, but doing it after keeps "services first, lock down second"
-  # ordering consistent with traditional sysadmin practice.
-  local harden_dir="${SCRIPT_DIR}/../harden"
-
-  log_info "stage 11/${total_stages}: harden-firewall (ufw)"
-  run_or_dryrun bash "${harden_dir}/harden-firewall.sh"
+    log_info "stage 11/${total_stages}: harden-firewall (ufw)"
+    run_or_dryrun bash "${harden_dir}/harden-firewall.sh"
 
   log_info "stage 12/${total_stages}: harden-fail2ban"
   run_or_dryrun bash "${harden_dir}/harden-fail2ban.sh"
@@ -265,6 +263,8 @@ main() {
     fi
     rm -f "${_cli_tmp}"
   fi
+
+  fi  # end of skip_hardening else block
 
   # Stage 19: install backup scripts + notify helper (no root access to
   # S3/email config needed — that's done by backup-install.sh when the
