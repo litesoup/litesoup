@@ -6,6 +6,38 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-07-14
+
+Added per-site backup system with local + S3-compatible storage, scheduling,
+and notification. Also fixed the landing page docs.
+
+### Added
+
+- **backup system** — `backup/backup-site.sh` creates timestamped snapshots of
+  site files and database at `/home/<user>/backups/<domain>/<timestamp>/`. Full
+  mode (files + DB) and partial mode (`--skip-files`, `--skip-db`,
+  `--exclude=PATH`). (`backup/*`)
+- **restore** — `backup/backup-restore.sh` restores from a specific or most
+  recent backup. Extracts files, imports DB via `wp db import`, flushes caches,
+  fixes ownership. (`backup/backup-restore.sh`)
+- **S3 destination** — upload to any S3-compatible store (AWS S3, IDrive e2,
+  Backblaze B2, DigitalOcean Spaces, etc.) via `s3cmd`. Config stored at
+  `/etc/litesoup/backup-s3.conf` (mode 0600). (`backup/lib/s3.sh`)
+- **scheduling** — systemd timer `litesoup-backup@DOMAIN.{service,timer}` with
+  daily default and custom schedule override. (`backup/backup-install.sh`)
+- **notification** — `install/lib/notify.sh` sends alerts via email (if
+  configured) and syslog (always). (`install/lib/notify.sh`)
+- **litesoup-cli backup group** — `litesoup backup site|restore|list|configure`.
+- **docs** — full backup documentation at `docs/backup.md`.
+
+### Fixed
+
+- **install-stack** — backup scripts are auto-installed to `/usr/lib/litesoup/`
+  during stage 19. Uses `repo_root` (lowercase) correctly.
+- **landing page** — `litesoup.com/docs/installation/` now uses the
+  `curl .../install.sh | sudo bash` quick install pattern instead of
+  `git clone`.
+
 ## [0.8.3] - 2026-07-14
 
 Fixed a provisioning-breaking bug where `install-stack.sh` locked out SSH
@@ -934,6 +966,7 @@ curl -H 'Host: example.test' http://127.0.0.1/wp-admin/install.php
 - **Plan I.C** — Redis + Memcached + per-site Apache FastCGI cache + Redis object cache auto-config
 - **Plan I.D** — `ufw`, `fail2ban`, `unattended-upgrades`, certbot/TLS, broader hardening, Sigstore-signed releases, distro detection beyond Ubuntu 24.04
 
+[0.9.0]: https://github.com/litesoup/litesoup/releases/tag/v0.9.0
 [0.8.3]: https://github.com/litesoup/litesoup/releases/tag/v0.8.3
 [0.8.2]: https://github.com/litesoup/litesoup/releases/tag/v0.8.2
 [0.8.1]: https://github.com/litesoup/litesoup/releases/tag/v0.8.1
