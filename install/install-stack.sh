@@ -187,6 +187,13 @@ main() {
     log_info "  -> node $(node --version 2>/dev/null || echo 'unknown') already installed"
   fi
 
+  # Define paths used by both hardening install stage and backup stage.
+  # Must be declared before the skip_hardening if/else since repo_root is
+  # needed by the backup stage (which runs after hardening, regardless of
+  # whether hardening was skipped).
+  local litesoup_lib=/usr/lib/litesoup
+  local repo_root="${SCRIPT_DIR}/.."
+
   if [ "${skip_hardening}" = "1" ]; then
     log_info "litesoup install-stack: hardening stages skipped via --skip-hardening"
   else
@@ -223,8 +230,6 @@ main() {
   run_or_dryrun bash "${harden_dir}/harden-php.sh"
 
   log_info "stage 17/${total_stages}: install scripts to /usr/lib/litesoup"
-  local litesoup_lib=/usr/lib/litesoup
-  local repo_root="${SCRIPT_DIR}/.."
   run_or_dryrun install -d -m 0755 "${litesoup_lib}"
   for dir in install site harden audit; do
     run_or_dryrun install -d -m 0755 "${litesoup_lib}/${dir}"
