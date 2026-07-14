@@ -229,6 +229,8 @@ main() {
   log_info "stage 16/${total_stages}: harden-php (php.ini hardening per version)"
   run_or_dryrun bash "${harden_dir}/harden-php.sh"
 
+  fi  # end of skip_hardening else block
+
   log_info "stage 17/${total_stages}: install scripts to /usr/lib/litesoup"
   run_or_dryrun install -d -m 0755 "${litesoup_lib}"
   for dir in install site harden audit; do
@@ -268,8 +270,6 @@ main() {
     fi
     rm -f "${_cli_tmp}"
   fi
-
-  fi  # end of skip_hardening else block
 
   # Stage 19: install backup scripts + notify helper (no root access to
   # S3/email config needed — that's done by backup-install.sh when the
