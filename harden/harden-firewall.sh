@@ -30,28 +30,40 @@ Idempotent: re-runs report 'already configured' and apply no changes.
 EOF
 }
 
-# Parse the active sshd Port from /etc/ssh/sshd_config.
-# Picks the LAST uncommented `^Port N` directive (sshd's own precedence rule);
-# falls back to 22 if the file is missing or has no Port line.
+# Detect the active sshd Port from the FULL config chain, including
+# /etc/ssh/sshd_config.d/*.conf drop-ins (where cloud-init / VPS
+# providers commonly set a non-standard port).
+#
+# Primary method: `sshd -T` — outputs the effective configuration
+# after resolving Includes, so it naturally yields the last-wins port
+# across the entire chain.
+# Fallback: manual awk over /etc/ssh/sshd_config (covers systems where
+# sshd is not yet installed when detect_ssh_port is called, though in
+# practice this runs after Apache stage ensures openssh-server is present).
+# Ultimate fallback: 22.
 detect_ssh_port() {
-  local conf="/etc/ssh/sshd_config"
   local port=""
-  if [ -r "${conf}" ]; then
-    # Strip leading whitespace, drop comment lines, match `Port <num>`,
-    # take the last hit.
-    port="$(awk '
-      /^[[:space:]]*#/ { next }
-      {
-        sub(/^[[:space:]]+/, "")
-        if ($1 == "Port" && $2 ~ /^[0-9]+$/) last = $2
-      }
-      END { if (last != "") print last }
-    ' "${conf}")"
+  if command -v sshd &>/dev/null; then
+    # sshd -T reads the full config chain (including sshd_config.d/*.conf)
+    # and outputs effective directives. Grep for the last `port N` line.
+    port="$(sshd -T 2>/dev/null | sed -n 's/^port //p' | tail -1)"
   fi
   if [ -z "${port}" ]; then
-    port="22"
+    local conf="/etc/ssh/sshd_config"
+    if [ -r "${conf}" ]; then
+      # Strip leading whitespace, drop comment lines, match `Port <num>`,
+      # take the last hit.
+      port="$(awk '
+        /^[[:space:]]*#/ { next }
+        {
+          sub(/^[[:space:]]+/, "")
+          if ($1 == "Port" && $2 ~ /^[0-9]+$/) last = $2
+        }
+        END { if (last != "") print last }
+      ' "${conf}")"
+    fi
   fi
-  printf '%s' "${port}"
+  printf '%s' "${port:-22}"
 }
 
 # Returns 0 if a rule for the given "port/proto" appears in `ufw status` output.

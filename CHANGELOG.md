@@ -6,6 +6,31 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-07-14
+
+Fixed a provisioning-breaking bug where `install-stack.sh` locked out SSH
+on fresh Ubuntu 24.04 VPS that use non-standard SSH ports configured via
+`/etc/ssh/sshd_config.d/*.conf` drop-ins (common with cloud-init / VPS
+providers). Also fixed pre-existing shellcheck warnings in `site-create.sh`
+that were blocking CI.
+
+### Fixed
+
+- **harden-firewall & harden-fail2ban** — `detect_ssh_port()` now uses
+  `sshd -T` as the primary detection method, which resolves the full config
+  chain including `Include` directives from `/etc/ssh/sshd_config.d/*.conf`.
+  Previously it only parsed `/etc/ssh/sshd_config` for an uncommented `Port`
+  directive; on Ubuntu 24.04 the default `#Port 22` is commented, causing a
+  fallback to port 22. Providers that set a non-standard port via drop-ins
+  (e.g. `50-cloud-init.conf` with `Port 2222`) would see UFW open port 22
+  (nothing listening) while blocking the real SSH port — **operator locked
+  out**. (`harden/harden-firewall.sh`, `harden/harden-fail2ban.sh`,
+  `test/bats/unit_harden.bats`)
+- **site-create (pre-existing)** — `ssh-keyscan` redirect now runs inside
+  `sh -c` so `sudo` applies correctly (SC2024); credential stripping uses
+  bash-native pattern matching instead of `sed` (SC2001).
+  (`site/site-create.sh`)
+
 ## [0.8.2] - 2026-07-14
 
 Install-stack hardening fixes discovered during production provisioning.
@@ -909,6 +934,7 @@ curl -H 'Host: example.test' http://127.0.0.1/wp-admin/install.php
 - **Plan I.C** — Redis + Memcached + per-site Apache FastCGI cache + Redis object cache auto-config
 - **Plan I.D** — `ufw`, `fail2ban`, `unattended-upgrades`, certbot/TLS, broader hardening, Sigstore-signed releases, distro detection beyond Ubuntu 24.04
 
+[0.8.3]: https://github.com/litesoup/litesoup/releases/tag/v0.8.3
 [0.8.2]: https://github.com/litesoup/litesoup/releases/tag/v0.8.2
 [0.8.1]: https://github.com/litesoup/litesoup/releases/tag/v0.8.1
 [0.8.0]: https://github.com/litesoup/litesoup/releases/tag/v0.8.0

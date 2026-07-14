@@ -48,14 +48,17 @@ TLS_EMAIL=""
 POOL_TIER="small"
 GIT_REPO=""
 GIT_BRANCH=""
+FRAMEWORK="wordpress"
 
 usage() {
   cat <<'EOF'
-litesoup site-create -- provision a WordPress site
+litesoup site-create -- provision a WordPress/Laravel site
 
 Usage: sudo bash site-create.sh --domain=DOMAIN [--user=NAME] [--php=X.Y] \
                                 [--tier=small|medium|large] \
                                 [--tls=letsencrypt|self-signed|none] [--email=ADDR] \
+                                [--framework=wordpress|laravel|generic] \
+                                [--git-repo=URL] [--git-branch=B] \
                                 [--dry-run]
   --user=NAME    System user that will own the docroot and run PHP-FPM
                  (default: litesoup; created if missing)
@@ -71,6 +74,10 @@ Usage: sudo bash site-create.sh --domain=DOMAIN [--user=NAME] [--php=X.Y] \
                  self-signed: openssl-generated cert at /etc/litesoup/ssl/<d>/
                  none:        HTTP only
   --email=ADDR   Required when --tls=letsencrypt; LE expiry notices go here
+  --framework=FRAMEWORK  Site framework (default: wordpress).
+                 wordpress: download WP + wp-config setup (existing behaviour)
+                 laravel:   composer create-project + artisan key:generate
+                 generic:   empty docroot, no framework-specific steps
   --git-repo=URL Clone this Git repo into the docroot instead of downloading
                  a fresh WordPress. Accepts https:// and git@... URLs.
   --git-branch=B Branch/tag/SHA to check out (default: repo default branch)
@@ -89,6 +96,7 @@ parse_args() {
       --email=*)      TLS_EMAIL="${arg#*=}" ;;
       --git-repo=*)   GIT_REPO="${arg#*=}" ;;
       --git-branch=*) GIT_BRANCH="${arg#*=}" ;;
+      --framework=*)  FRAMEWORK="${arg#*=}" ;;
       --dry-run)      DRY_RUN=1 ;;
       --help|-h)      usage; exit 0 ;;
       *) log_error "unknown argument: ${arg}"; usage; exit 64 ;;
@@ -120,6 +128,10 @@ parse_args() {
   if [ -n "${GIT_REPO}" ] && ! [[ "${GIT_REPO}" =~ ^(https?://|git@) ]]; then
     log_error "--git-repo: must start with https://, http://, or git@ (got '${GIT_REPO}')"; exit 64
   fi
+  case "${FRAMEWORK}" in
+    wordpress|laravel|generic) ;;
+    *) log_error "--framework must be one of: wordpress, laravel, generic (got '${FRAMEWORK}')"; exit 64 ;;
+  esac
 }
 
 # Derive a DB identifier from the domain (mariadb name limit = 64; we stay short).
@@ -196,6 +208,15 @@ create_docroot() {
   local docroot="/home/${SITE_USER}/webapps/${DOMAIN}"
   run_or_dryrun install -d -o "${SITE_USER}" -g "${SITE_USER}" -m 0755 "${docroot}"
   DOCROOT="${docroot}"
+  # VHOST_DOCROOT is the DocumentRoot used in Apache vhost.
+  # For WordPress it matches the site root; for Laravel/generic it's /public.
+  case "${FRAMEWORK}" in
+    laravel|generic) VHOST_DOCROOT="${docroot}/public" ;;
+    *)               VHOST_DOCROOT="${docroot}" ;;
+  esac
+  if [ "${DRY_RUN}" != "1" ]; then
+    install -d -o "${SITE_USER}" -g "${SITE_USER}" -m 0755 "${VHOST_DOCROOT}"
+  fi
 }
 
 ensure_htaccess() {
@@ -261,8 +282,7 @@ init_submodules() {
   if [[ "${GIT_REPO}" =~ ^https://([^@]+)@github\.com/ ]]; then
     token="${BASH_REMATCH[1]}"
     sudo -H -u "${SITE_USER}" mkdir -p "/home/${SITE_USER}/.ssh"
-    sudo -H -u "${SITE_USER}" ssh-keyscan -H github.com \
-      >> "/home/${SITE_USER}/.ssh/known_hosts" 2>/dev/null || true
+    sudo -H -u "${SITE_USER}" sh -c "ssh-keyscan -H github.com >> /home/${SITE_USER}/.ssh/known_hosts 2>/dev/null" || true
     sudo -H -u "${SITE_USER}" git config --global \
       "url.https://${token}@github.com/.insteadOf" "git@github.com:"
   fi
@@ -366,6 +386,54 @@ inject_cache_constants() {
   log_info "site-create: injected WP_CACHE_KEY_SALT + WP_REDIS_* into wp-config.php"
 }
 
+# ── Laravel setup ──────────────────────────────────────────────────────────
+# Called when --framework=laravel. Runs composer create-project, artisan
+# key:generate, and storage:link in the site docroot.
+setup_laravel() {
+  local app_dir="${DOCROOT}"
+
+  if [ "${DRY_RUN}" = "1" ]; then
+    log_info "[DRYRUN] would composer create-project laravel/laravel in ${app_dir}"
+    log_info "[DRYRUN] would php artisan key:generate in ${app_dir}"
+    log_info "[DRYRUN] would php artisan storage:link in ${app_dir}"
+    return 0
+  fi
+
+  # Only create the project if the directory is empty (no .env, no artisan).
+  if [ -f "${app_dir}/artisan" ]; then
+    log_info "site-create: artisan already present -- skipping composer create-project"
+  else
+    log_info "site-create: creating Laravel project via composer..."
+    sudo -H -u "${SITE_USER}" composer create-project --no-interaction \
+      laravel/laravel "${app_dir}" \
+      || { log_error "site-create: composer create-project failed"; exit 1; }
+  fi
+
+  # Key generation (idempotent -- artisan skips if APP_KEY already set)
+  log_info "site-create: generating app key..."
+  sudo -H -u "${SITE_USER}" php -d allow_url_fopen=On \
+    "${app_dir}/artisan" key:generate \
+    || log_warn "site-create: artisan key:generate had warnings (non-fatal)"
+
+  # Storage link (idempotent -- artisan skips if link already exists)
+  log_info "site-create: linking storage..."
+  sudo -H -u "${SITE_USER}" php "${app_dir}/artisan" storage:link \
+    || log_warn "site-create: artisan storage:link had warnings (non-fatal)"
+
+  # Ensure /public/storage exists for the vhost
+  if [ ! -L "${VHOST_DOCROOT}/storage" ] && [ ! -d "${VHOST_DOCROOT}/storage" ]; then
+    log_info "site-create: storage symlink not in public/ -- creating manually"
+    sudo -H -u "${SITE_USER}" ln -sf \
+      "${app_dir}/storage/app/public" "${VHOST_DOCROOT}/storage" 2>/dev/null || true
+  fi
+}
+
+# ── Generic setup ──────────────────────────────────────────────────────────
+# Called when --framework=generic. Nothing to do -- docroot is ready.
+setup_generic() {
+  log_info "site-create: generic framework -- no setup needed"
+}
+
 main() {
   parse_args "$@"
   require_root
@@ -394,19 +462,30 @@ main() {
   if [ -n "${GIT_REPO}" ]; then
     clone_repo
   else
-    download_wordpress
+    case "${FRAMEWORK}" in
+      laravel) setup_laravel ;;
+      generic) setup_generic ;;
+      *)       download_wordpress ;;
+    esac
   fi
 
   local scheme="http"
   [ "${TLS_MODE}" != "none" ] && scheme="https"
-  log_info "site-create: ${DOMAIN} -> ${scheme}://${DOMAIN}/wp-admin/install.php"
+  local wp_path=""
+  [ "${FRAMEWORK}" = "wordpress" ] && wp_path="/wp-admin/install.php"
+  log_info "site-create: ${DOMAIN} -> ${scheme}://${DOMAIN}${wp_path}"
   log_info "site-create: docroot ${DOCROOT}"
+  log_info "site-create: framework ${FRAMEWORK}"
   log_info "site-create: php ${PHP_VERSION} (socket $(php_fpm_socket_for_user "${SITE_USER}" "${PHP_VERSION}"))"
   log_info "site-create: tls ${TLS_MODE}"
   if [ -n "${GIT_REPO}" ]; then
     # Strip any embedded credentials (https://token@host → https://host) before logging.
     local git_repo_safe
-    git_repo_safe="$(echo "${GIT_REPO}" | sed 's|https\?://[^@]*@|https://|')"
+    if [[ "${GIT_REPO}" == https://*@* ]]; then
+      git_repo_safe="https://${GIT_REPO##*@}"
+    else
+      git_repo_safe="${GIT_REPO}"
+    fi
     log_info "site-create: git ${git_repo_safe}${GIT_BRANCH:+ @ ${GIT_BRANCH}}"
   fi
 }
