@@ -6,6 +6,32 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-07-15
+
+Bug fixes discovered during Laravel (TSTT) deployment on jp1.
+
+### Fixed
+
+- **Missing default vhost** — access server IP directly no longer falls back
+  to the alphabetically-first named site. A `000-default.conf` catch-all serves
+  HTTP 404 on both *:80 and *:443 (with SSL snakeoil cert). Installed and
+  enabled by `install-stack.sh` stage 17. (`templates/apache/000-default.conf.tmpl`,
+  `install/install-stack.sh`)
+- **`--git-repo` timeout** — git clone now uses `--depth=1` (shallow), has a
+  120-second timeout via `timeout`, and exits with a clear error message on
+  failure instead of hanging indefinitely. (`site/site-create.sh`)
+- **PHP-FPM pool exhaustion** — default tier changed from `small`
+  (max_children=5) to `medium` (max_children=20), preventing intermittent 500s
+  when multiple sites share the same pool. (`site/site-create.sh`,
+  `site/site-import.sh`)
+- **VHOST_DOCROOT unbound** — `site-set-tls.sh` and `site-set-php.sh` now set
+  `VHOST_DOCROOT` before calling `write_vhost()`, fixing "unbound variable"
+  errors with `--framework=generic` sites. (`site/site-set-tls.sh`,
+  `site/site-set-php.sh`)
+- **`repo_root` unbound** — moved `repo_root` and `litesoup_lib` declarations
+  outside the `skip_hardening` if/else block so stages 17-19 run even with
+  `--skip-hardening`. (`install/install-stack.sh`)
+
 ## [0.9.0] - 2026-07-14
 
 Added per-site backup system with local + S3-compatible storage, scheduling,
@@ -966,6 +992,7 @@ curl -H 'Host: example.test' http://127.0.0.1/wp-admin/install.php
 - **Plan I.C** — Redis + Memcached + per-site Apache FastCGI cache + Redis object cache auto-config
 - **Plan I.D** — `ufw`, `fail2ban`, `unattended-upgrades`, certbot/TLS, broader hardening, Sigstore-signed releases, distro detection beyond Ubuntu 24.04
 
+[0.9.1]: https://github.com/litesoup/litesoup/releases/tag/v0.9.1
 [0.9.0]: https://github.com/litesoup/litesoup/releases/tag/v0.9.0
 [0.8.3]: https://github.com/litesoup/litesoup/releases/tag/v0.8.3
 [0.8.2]: https://github.com/litesoup/litesoup/releases/tag/v0.8.2
