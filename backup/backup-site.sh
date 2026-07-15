@@ -117,6 +117,19 @@ main() {
   require_root
   validate
 
+  # Acquire lock — prevent concurrent runs for the same domain
+  local lockfile="/var/lock/litesoup-backup-${DOMAIN}.lock"
+  exec 200>"${lockfile}"
+  flock -n 200 || {
+    log_error "backup: another backup is already running for ${DOMAIN} — skipping"
+    exit 0
+  }
+  trap 'rm -f "${lockfile}"; exit' EXIT INT TERM
+
+  local ts_start
+  ts_start="$(date +%s)"
+  log_info "backup: starting for ${DOMAIN}"
+
   # 1. Resolve site user (auto-detect if not provided)
   if [ -z "${SITE_USER}" ]; then
     SITE_USER="$(backup_site_user "${DOMAIN}")" || exit 1
@@ -138,10 +151,21 @@ main() {
 
   # 3. Backup database
   if [ "${SKIP_DB}" != "1" ]; then
-    backup_dump_db "${DOMAIN}" "${backup_dir}" || {
-      notify_event "backup failed: ${DOMAIN}" "Database dump failed for ${DOMAIN}"
+    local db_ts
+    db_ts="$(date +%s)"
+    timeout 300 bash -c "backup_dump_db \"${DOMAIN}\" \"${backup_dir}\"" || {
+      local db_ec=$?
+      if [ "${db_ec}" -eq 124 ]; then
+        notify_event "backup TIMEOUT: ${DOMAIN}" "Database dump timed out (>300s) for ${DOMAIN}"
+        log_error "backup: DB dump TIMEOUT (>300s) for ${DOMAIN}"
+      else
+        notify_event "backup failed: ${DOMAIN}" "Database dump failed (exit ${db_ec}) for ${DOMAIN}"
+        log_error "backup: DB dump FAILED (exit ${db_ec}) for ${DOMAIN}"
+      fi
       exit 1
     }
+    local db_elapsed=$(( $(date +%s) - db_ts ))
+    log_info "backup: DB dump OK (${db_elapsed}s) for ${DOMAIN}"
   fi
 
   # 4. Backup files
@@ -158,11 +182,22 @@ main() {
         cp "${exclude_file}" "${backup_dir}/exclude.txt"
       fi
     fi
-    backup_archive "${docroot}" "${files_archive}" || {
-      notify_event "backup failed: ${DOMAIN}" "File archive failed for ${DOMAIN}"
+    local fs_ts
+    fs_ts="$(date +%s)"
+    timeout 600 bash -c "backup_archive \"${docroot}\" \"${files_archive}\"" || {
+      local fs_ec=$?
       rm -f "${exclude_file:-}"
+      if [ "${fs_ec}" -eq 124 ]; then
+        notify_event "backup TIMEOUT: ${DOMAIN}" "File archive timed out (>600s) for ${DOMAIN}"
+        log_error "backup: file archive TIMEOUT (>600s) for ${DOMAIN}"
+      else
+        notify_event "backup failed: ${DOMAIN}" "File archive failed (exit ${fs_ec}) for ${DOMAIN}"
+        log_error "backup: file archive FAILED (exit ${fs_ec}) for ${DOMAIN}"
+      fi
       exit 1
     }
+    local fs_elapsed=$(( $(date +%s) - fs_ts ))
+    log_info "backup: file archive OK (${fs_elapsed}s) for ${DOMAIN}"
     rm -f "${exclude_file:-}"
   fi
 
@@ -197,10 +232,13 @@ main() {
   backup_rotate_local "${backup_base}" "${KEEP}"
 
   # 8. Summary
+  local ts_end
+  ts_end="$(date +%s)"
+  local total_elapsed=$(( ts_end - ts_start ))
   local total_size
   total_size="$(backup_size_human "${backup_dir}" 2>/dev/null || echo "unknown")"
-  log_info "backup: COMPLETE for ${DOMAIN} → ${backup_dir} (${total_size})"
-  notify_event "backup complete: ${DOMAIN}" "Backup completed successfully.\n  Location: ${backup_dir}\n  Size: ${total_size}"
+  log_info "backup: COMPLETE for ${DOMAIN} → ${backup_dir} (${total_size}, ${total_elapsed}s)"
+  notify_event "backup complete: ${DOMAIN}" "Backup completed successfully.\n  Location: ${backup_dir}\n  Size: ${total_size}\n  Duration: ${total_elapsed}s"
 }
 
 main "$@"

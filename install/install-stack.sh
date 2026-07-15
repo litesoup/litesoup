@@ -71,6 +71,7 @@ main() {
       --php-versions=*)    php_versions_csv="${arg#*=}" ;;
       --redis-maxmemory=*) redis_maxmemory="${arg#*=}" ;;
       --skip-hardening)    skip_hardening=1 ;;
+      --ssh-key=*)         SSH_KEY="${arg#*=}" ;;
       --dry-run) DRY_RUN=1 ;;
       --help|-h) usage; exit 0 ;;
       *) log_error "unknown argument: ${arg}"; usage; exit 64 ;;
@@ -229,9 +230,15 @@ main() {
   log_info "stage 16/${total_stages}: harden-php (php.ini hardening per version)"
   run_or_dryrun bash "${harden_dir}/harden-php.sh"
 
+  log_info "stage 17/${total_stages}: harden-user (litesoup SSH user + sudo)"
+  # Only runs if --ssh-key was passed; otherwise it's a no-op.
+  if [ -n "${SSH_KEY:-}" ]; then
+    run_or_dryrun bash "${harden_dir}/harden-user.sh" --ssh-key="${SSH_KEY}"
+  fi
+
   fi  # end of skip_hardening else block
 
-  log_info "stage 17/${total_stages}: install scripts to /usr/lib/litesoup"
+  log_info "stage 18/${total_stages}: install scripts to /usr/lib/litesoup"
   run_or_dryrun install -d -m 0755 "${litesoup_lib}"
   for dir in install site harden audit; do
     run_or_dryrun install -d -m 0755 "${litesoup_lib}/${dir}"

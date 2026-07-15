@@ -142,3 +142,39 @@ setup() {
   [ "${status}" -eq 0 ]
   [[ "${output}" == "OK" ]]
 }
+
+# --- #46: harden-user ---
+
+@test "harden-user.sh exists and is executable" {
+  [ -f "${REPO_ROOT}/harden/harden-user.sh" ]
+}
+
+@test "install-stack.sh has --ssh-key flag" {
+  grep -qF -- '--ssh-key' "${REPO_ROOT}/install/install-stack.sh"
+}
+
+@test "install-stack.sh has harden-user stage" {
+  grep -q 'harden-user' "${REPO_ROOT}/install/install-stack.sh"
+}
+
+# --- #47: backup stagger + timeout + lock ---
+
+@test "backup-stagger.sh exists" {
+  [ -f "${REPO_ROOT}/backup/backup-stagger.sh" ]
+}
+
+@test "backup-site.sh has flock lock guard" {
+  grep -q 'flock -n 200' "${REPO_ROOT}/backup/backup-site.sh"
+}
+
+@test "backup-site.sh has timeout on db dump" {
+  grep -q 'timeout 300.*backup_dump_db' "${REPO_ROOT}/backup/backup-site.sh"
+}
+
+@test "backup-site.sh has timeout on file archive" {
+  grep -q 'timeout 600.*backup_archive' "${REPO_ROOT}/backup/backup-site.sh"
+}
+
+@test "backup-site.sh logs elapsed time" {
+  grep -q 'total_elapsed' "${REPO_ROOT}/backup/backup-site.sh"
+}
