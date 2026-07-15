@@ -11,15 +11,3 @@
         Require all granted
     </Directory>
 </VirtualHost>
-
-<VirtualHost _default_:443>
-    SSLEngine on
-    SSLCertificateFile /etc/ssl/certs/ssl-cert-snakeoil.pem
-    SSLCertificateKeyFile /etc/ssl/private/ssl-cert-snakeoil.key
-    DocumentRoot /var/www/html
-    <Directory /var/www/html>
-        Options -Indexes +FollowSymLinks
-        AllowOverride None
-        Require all granted
-    </Directory>
-</VirtualHost>
