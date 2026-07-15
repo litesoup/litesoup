@@ -6,6 +6,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-07-15
+
+### Added (issues #46, #47)
+
+- **litesoup SSH user** — `harden/harden-user.sh` configures shell, SSH
+  authorized_keys, and passwordless sudo. Enabled via `install-stack.sh --ssh-key`.
+  Optional `--lock-root` flag disables direct root SSH login.
+  (`harden/harden-user.sh`, `install/install-stack.sh`)
+- **Backup stagger** — `backup/backup-stagger.sh` runs staggered backups for all
+  discovered sites with configurable delay and per-backup timeout.
+  (`backup/backup-stagger.sh`)
+- **Backup concurrency protection** — `flock` lock file prevents concurrent
+  backup runs for the same domain. (`backup/backup-site.sh`)
+- **Backup per-step timeout** — 300s timeout on DB dumps, 600s on file archives.
+  Exit code tracking (TIMEOUT/FAIL/DONE) with structured logging.
+  (`backup/backup-site.sh`)
+
 ## [0.9.2] - 2026-07-15
 
 ### Added
@@ -1002,6 +1019,7 @@ curl -H 'Host: example.test' http://127.0.0.1/wp-admin/install.php
 - **Plan I.C** — Redis + Memcached + per-site Apache FastCGI cache + Redis object cache auto-config
 - **Plan I.D** — `ufw`, `fail2ban`, `unattended-upgrades`, certbot/TLS, broader hardening, Sigstore-signed releases, distro detection beyond Ubuntu 24.04
 
+[0.10.0]: https://github.com/litesoup/litesoup/releases/tag/v0.10.0
 [0.9.2]: https://github.com/litesoup/litesoup/releases/tag/v0.9.2
 [0.9.1]: https://github.com/litesoup/litesoup/releases/tag/v0.9.1
 [0.9.0]: https://github.com/litesoup/litesoup/releases/tag/v0.9.0
