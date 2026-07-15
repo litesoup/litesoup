@@ -268,6 +268,11 @@ main() {
     run_or_dryrun a2ensite 000-default.conf 2>/dev/null || true
   fi
 
+  # Install the landing page served by the default vhost (direct IP access).
+  if [ -f "${repo_root}/templates/apache/default-index.html" ]; then
+    run_or_dryrun cp "${repo_root}/templates/apache/default-index.html" /var/www/html/index.html
+  fi
+
   log_info "stage 18/${total_stages}: install litesoup-cli (optional)"
   local cli_install_url="https://raw.githubusercontent.com/litesoup/litesoup-cli/main/install.sh"
   if command -v curl &>/dev/null; then

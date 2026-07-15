@@ -1,14 +1,15 @@
 # 000-default.conf — litesoup catch-all vhost.
-# Serves 404 for any request that doesn't match a named site (IP access,
-# unknown domains), preventing fallback to the alphabetically first site.
+# Serves the LiteSoup landing page for any request that doesn't match a
+# named site (direct IP access, unknown domains).
 # Installed by install-stack.sh stage 17.
 
 <VirtualHost _default_:80>
     DocumentRoot /var/www/html
     <Directory /var/www/html>
-        Require all denied
+        Options -Indexes +FollowSymLinks
+        AllowOverride None
+        Require all granted
     </Directory>
-    Redirect 404 /
 </VirtualHost>
 
 <VirtualHost _default_:443>
@@ -17,7 +18,8 @@
     SSLCertificateKeyFile /etc/ssl/private/ssl-cert-snakeoil.key
     DocumentRoot /var/www/html
     <Directory /var/www/html>
-        Require all denied
+        Options -Indexes +FollowSymLinks
+        AllowOverride None
+        Require all granted
     </Directory>
-    Redirect 404 /
 </VirtualHost>
