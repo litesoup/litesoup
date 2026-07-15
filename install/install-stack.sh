@@ -258,6 +258,16 @@ main() {
   fi
   run_or_dryrun install -m 0644 "${repo_root}/VERSION" "${litesoup_lib}/VERSION"
 
+  # Enable the 000-default catch-all vhost (serves 404 for IP/direct access).
+  # Prevents fallback to the alphabetically-first named site when no
+  # ServerName matches.
+  if [ -f "${repo_root}/templates/apache/000-default.conf.tmpl" ]; then
+    run_or_dryrun install -m 0644 \
+      "${repo_root}/templates/apache/000-default.conf.tmpl" \
+      "/etc/apache2/sites-available/000-default.conf"
+    run_or_dryrun a2ensite 000-default.conf 2>/dev/null || true
+  fi
+
   log_info "stage 18/${total_stages}: install litesoup-cli (optional)"
   local cli_install_url="https://raw.githubusercontent.com/litesoup/litesoup-cli/main/install.sh"
   if command -v curl &>/dev/null; then

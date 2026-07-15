@@ -45,7 +45,7 @@ SITE_USER="${DEFAULT_SITE_USER}"
 PHP_VERSION="${PHP_VERSION_DEFAULT}"
 TLS_MODE="none"
 TLS_EMAIL=""
-POOL_TIER="small"
+POOL_TIER="medium"
 GIT_REPO=""
 GIT_BRANCH=""
 FRAMEWORK="wordpress"
@@ -311,7 +311,17 @@ clone_repo() {
     log_info "site-create: repo already cloned at ${DOCROOT} — pulling latest"
     sudo -H -u "${SITE_USER}" git -C "${DOCROOT}" pull --ff-only
   else
-    sudo -H -u "${SITE_USER}" git clone "${branch_args[@]}" "${GIT_REPO}" "${DOCROOT}"
+    # Shallow clone (--depth=1) for speed on slow networks. Use timeout
+    # to prevent hanging indefinitely if the remote is unreachable.
+    local clone_timeout=120
+    log_info "site-create: cloning ${GIT_REPO} (timeout ${clone_timeout}s)..."
+    timeout "${clone_timeout}" sudo -H -u "${SITE_USER}" git clone \
+      --depth=1 "${branch_args[@]}" "${GIT_REPO}" "${DOCROOT}" 2>/dev/null || {
+      log_error "site-create: git clone failed or timed out (${clone_timeout}s)"
+      log_error "site-create: ${DOCROOT} exists but repo was not cloned"
+      log_error "site-create: re-run with --git-repo after checking network or use a smaller repo"
+      exit 1
+    }
   fi
 
   init_submodules
