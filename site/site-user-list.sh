@@ -48,8 +48,8 @@ main() {
     local user
     user="$(basename "${dir}")"
     local home="${dir}"
-    local shell
-    shell="$(getent passwd "${user}" 2>/dev/null | cut -d: -f7)"
+    local shell=""
+    shell="$(getent passwd "${user}" 2>/dev/null | cut -d: -f7)" || true
     local webapps="${home}/webapps"
 
     # Only show users that either have webapps dir or are litesoup
