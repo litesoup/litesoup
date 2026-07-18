@@ -200,7 +200,9 @@ EOF
     fi
     rm -f /tmp/litesoup-sshd-t.err
     log_info "harden-ssh: sshd -t validation ok"
-    [ -n "${backup}" ] && rm -f "${backup}"
+    # NOTE: backup is intentionally NOT cleaned up here. We keep it until
+    # AFTER the reload health check (step 5b), so a runtime reload failure
+    # can still be rolled back.
   fi
 
   # 5. Reload only if we changed something. NEVER restart — that would drop
@@ -208,8 +210,55 @@ EOF
   #    `ssh.service` (not sshd.service).
   if [ "${CHANGED:-0}" = "1" ]; then
     run_or_dryrun systemctl reload ssh
+
+    # 5b. POST-RELOAD HEALTH CHECK (issue #50). `sshd -t` validates syntax
+    #     but `systemctl reload ssh` can still fail at runtime — sshd may
+    #     silently fail during re-exec on some OpenSSH / Ubuntu combos,
+    #     leaving port 22 with "Connection refused".  Poll up to 6 seconds
+    #     for the listener to come back.
+    if [ "${DRY_RUN}" != "1" ]; then
+      local ssh_port=22
+      if [ -n "${SSH_CONNECTION:-}" ]; then
+        # Port we are actually connected on — best signal.
+        ssh_port="$(echo "${SSH_CONNECTION}" | awk '{print $4}')"
+      else
+        # Fallback: read the effective configured port.
+        ssh_port="$(sshd -T 2>/dev/null | sed -n 's/^port //p' | tail -1)"
+        ssh_port="${ssh_port:-22}"
+      fi
+      local poll_ok=0
+      local i
+      for i in 1 2 3; do
+        sleep 2
+        if pgrep -x sshd >/dev/null 2>&1 && \
+           ss -tlnp 2>/dev/null | grep -qE ":${ssh_port}\b"; then
+          poll_ok=1
+          break
+        fi
+      done
+      if [ "${poll_ok}" != "1" ]; then
+        log_error "harden-ssh: HEALTH CHECK FAILED — sshd not listening on port ${ssh_port} after reload"
+        log_error "harden-ssh: Reverting ${OVERRIDE_FILE} and restarting sshd..."
+        if [ -n "${backup:-}" ]; then
+          install -m 0644 -o root -g root "${backup}" "${OVERRIDE_FILE}"
+          rm -f "${backup}"
+        else
+          rm -f "${OVERRIDE_FILE}"
+        fi
+        # Force restart — will terminate this session, but the original
+        # config is restored so the admin can reconnect.
+        systemctl restart ssh 2>/dev/null || true
+        log_error "harden-ssh: sshd restarted with original config. Reconnect via SSH."
+        exit 1
+      fi
+      log_info "harden-ssh: health check ok — sshd listening on port ${ssh_port}"
+      # Reload succeeded — safe to discard the backup now.
+      [ -n "${backup:-}" ] && rm -f "${backup}"
+    fi
   else
     log_info "harden-ssh: no override changes — skipping reload"
+    # No reload happened — clean up the backup we kept for the health check.
+    [ -n "${backup:-}" ] && rm -f "${backup}"
   fi
 
   # 6. Print active hardening directives (skipped in dry-run since the file

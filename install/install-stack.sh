@@ -125,10 +125,11 @@ main() {
   require_root
   require_ubuntu_2404
 
-  # Stage count: without --skip-hardening, composer (9) + node (10) + hardening/stages 11-18 run.
-  # With --skip-hardening, stages 9-12 run (composer + node + install scripts + litesoup-cli).
-  local total_stages=18
-  [ "${skip_hardening}" = "1" ] && total_stages=12
+  # Stage count: without --skip-hardening, hardening/stages 11-16 run (harden-ssh.sh
+  # is NOT included — it's a post-install step, run `bash harden/harden-ssh.sh`
+  # manually when ready). With --skip-hardening, stages 9-11 run.
+  local total_stages=17
+  [ "${skip_hardening}" = "1" ] && total_stages=11
 
   log_info "stage 1/${total_stages}: apache"
   ensure_apache
@@ -214,23 +215,18 @@ main() {
   log_info "stage 13/${total_stages}: harden-unattended-upgrades"
   run_or_dryrun bash "${harden_dir}/harden-unattended-upgrades.sh"
 
-  # Hardening stages 14-16 added in v0.7.0. CRITICAL: harden-ssh disables
-  # PasswordAuthentication. If you bootstrap a host via password-only SSH
-  # (e.g., fresh DO droplet's root password), running install-stack will
-  # lock you out on next session. Always set up an SSH key BEFORE running
-  # install-stack on a new host. The script writes /etc/ssh/sshd_config.d/
-  # so you can re-enable password auth via a higher-numbered file if you
-  # explicitly want it (see /etc/ssh/sshd_config.d/52-litesoup-harden.conf).
-  log_info "stage 14/${total_stages}: harden-ssh (always-safe defaults; --no-password-auth / --no-root-login are opt-in)"
-  run_or_dryrun bash "${harden_dir}/harden-ssh.sh"
+  # NOTE: harden-ssh.sh is NOT called during install-stack. It's available as
+  # a post-install step: run `bash /usr/lib/litesoup/harden/harden-ssh.sh`
+  # when ready. This avoids any risk of SSH lockout during initial provisioning.
+  # See harden/harden-ssh.sh for options (--no-root-login, --no-password-auth).
 
-  log_info "stage 15/${total_stages}: harden-apache (ServerTokens, headers, mod_status local-only)"
+  log_info "stage 14/${total_stages}: harden-apache (ServerTokens, headers, mod_status local-only)"
   run_or_dryrun bash "${harden_dir}/harden-apache.sh"
 
-  log_info "stage 16/${total_stages}: harden-php (php.ini hardening per version)"
+  log_info "stage 15/${total_stages}: harden-php (php.ini hardening per version)"
   run_or_dryrun bash "${harden_dir}/harden-php.sh"
 
-  log_info "stage 17/${total_stages}: harden-user (litesoup SSH user + sudo)"
+  log_info "stage 16/${total_stages}: harden-user (litesoup SSH user + sudo)"
   # Only runs if --ssh-key was passed; otherwise it's a no-op.
   if [ -n "${SSH_KEY:-}" ]; then
     run_or_dryrun bash "${harden_dir}/harden-user.sh" --ssh-key="${SSH_KEY}"
@@ -238,7 +234,7 @@ main() {
 
   fi  # end of skip_hardening else block
 
-  log_info "stage 18/${total_stages}: install scripts to /usr/lib/litesoup"
+  log_info "stage 17/${total_stages}: install scripts to /usr/lib/litesoup"
   run_or_dryrun install -d -m 0755 "${litesoup_lib}"
   for dir in install site harden audit; do
     run_or_dryrun install -d -m 0755 "${litesoup_lib}/${dir}"
@@ -280,7 +276,7 @@ main() {
     run_or_dryrun cp "${repo_root}/templates/apache/default-index.html" /var/www/html/index.html
   fi
 
-  log_info "stage 18/${total_stages}: install litesoup-cli (optional)"
+  log_info "stage 17/${total_stages}: install litesoup-cli (optional)"
   local cli_install_url="https://raw.githubusercontent.com/litesoup/litesoup-cli/main/install.sh"
   if command -v curl &>/dev/null; then
     local _cli_tmp

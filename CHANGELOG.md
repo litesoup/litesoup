@@ -6,6 +6,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Fixed (issue #50)
+
+- **harden-ssh.sh: post-reload health check** — After `systemctl reload ssh`,
+  the script now polls 3×2 seconds for sshd to be actively listening on the
+  configured port (detected via `SSH_CONNECTION` or `sshd -T`). If the check
+  fails, the override is reverted and sshd restarted with the original config,
+  preventing permanent SSH lockout on fresh Ubuntu 24.04 installs.
+  (`harden/harden-ssh.sh`)
+
+### Changed
+
+- **harden-ssh.sh is no longer called during install-stack** — SSH hardening
+  is now a post-install step, not a required stage. Run manually when ready:
+  `bash /usr/lib/litesoup/harden/harden-ssh.sh [--no-root-login] [--no-password-auth]`.
+  The script is still installed to `/usr/lib/litesoup/harden/` during stage 17.
+  (`install/install-stack.sh`)
+
 ## [0.10.0] - 2026-07-15
 
 ### Added (issues #46, #47)
