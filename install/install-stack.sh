@@ -221,6 +221,11 @@ main() {
   # install-stack on a new host. The script writes /etc/ssh/sshd_config.d/
   # so you can re-enable password auth via a higher-numbered file if you
   # explicitly want it (see /etc/ssh/sshd_config.d/52-litesoup-harden.conf).
+  #
+  # v0.10.1+: harden-ssh.sh now includes a POST-RELOAD health check (issue #50).
+  # After `systemctl reload ssh`, it polls 3x2s for sshd to be listening on
+  # the active port. If the check fails, the override is reverted and sshd
+  # restarted with original config, preventing permanent lockout.
   log_info "stage 14/${total_stages}: harden-ssh (always-safe defaults; --no-password-auth / --no-root-login are opt-in)"
   run_or_dryrun bash "${harden_dir}/harden-ssh.sh"
 
