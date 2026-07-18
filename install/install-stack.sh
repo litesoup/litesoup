@@ -172,15 +172,15 @@ main() {
   log_info "stage 10/${total_stages}: node.js + npm"
   if ! command -v node &>/dev/null; then
     # Nodesource setup for Node.js 22.x LTS
+    # NOTE: The old gpg --dearmor method produces a key that apt rejects
+    # on Ubuntu 24.04. Use the official setup script instead.
     if [ "${DRY_RUN:-0}" != "1" ]; then
       if ! command -v node &>/dev/null; then
-        apt_install ca-certificates curl gnupg
-        mkdir -p /etc/apt/keyrings
-        curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
-          | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg 2>/dev/null || true
-        echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" \
-          > /etc/apt/sources.list.d/nodesource.list
-        apt-get update -qq && apt_install nodejs
+        apt_install ca-certificates curl
+        curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/nodesetup.sh
+        bash /tmp/nodesetup.sh
+        apt-get install -y nodejs
+        rm -f /tmp/nodesetup.sh
       fi
     else
       log_info "  [dry-run] would install nodejs from nodesource"

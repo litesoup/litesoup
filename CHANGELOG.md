@@ -23,6 +23,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   The script is still installed to `/usr/lib/litesoup/harden/` during stage 17.
   (`install/install-stack.sh`)
 
+### Fixed
+
+- **NodeSource GPG key for Node.js 22.x** — Stage 10 now uses the official
+  NodeSource setup script instead of manual `gpg --dearmor` key import, which
+  `apt-get update` rejected on Ubuntu 24.04. (`install/install-stack.sh`)
+
 ## [0.10.0] - 2026-07-15
 
 ### Added (issues #46, #47)
