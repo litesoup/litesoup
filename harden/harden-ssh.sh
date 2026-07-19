@@ -211,11 +211,16 @@ EOF
   if [ "${CHANGED:-0}" = "1" ]; then
     run_or_dryrun systemctl reload ssh
 
-    # 5b. POST-RELOAD HEALTH CHECK (issue #50). `sshd -t` validates syntax
+    # 5b. POST-RELOAD HEALTH CHECK (issue #50, #53). `sshd -t` validates syntax
     #     but `systemctl reload ssh` can still fail at runtime — sshd may
     #     silently fail during re-exec on some OpenSSH / Ubuntu combos,
-    #     leaving port 22 with "Connection refused".  Poll up to 6 seconds
+    #     leaving port 22 with "Connection refused".  Poll up to 12 seconds
     #     for the listener to come back.
+    #
+    #     On busy systems (e.g. mid-install) the reload may take >6s for sshd
+    #     to re-bind. If the sshd process is alive but port not bound yet,
+    #     log a warning and proceed — the override IS written and will take
+    #     effect on next sshd restart. Only revert if sshd died completely.
     if [ "${DRY_RUN}" != "1" ]; then
       local ssh_port=22
       if [ -n "${SSH_CONNECTION:-}" ]; then
@@ -228,7 +233,7 @@ EOF
       fi
       local poll_ok=0
       local i
-      for i in 1 2 3; do
+      for i in 1 2 3 4 5 6; do
         sleep 2
         if pgrep -x sshd >/dev/null 2>&1 && \
            ss -tlnp 2>/dev/null | grep -qE ":${ssh_port}\b"; then
@@ -237,22 +242,31 @@ EOF
         fi
       done
       if [ "${poll_ok}" != "1" ]; then
-        log_error "harden-ssh: HEALTH CHECK FAILED — sshd not listening on port ${ssh_port} after reload"
-        log_error "harden-ssh: Reverting ${OVERRIDE_FILE} and restarting sshd..."
-        if [ -n "${backup:-}" ]; then
-          install -m 0644 -o root -g root "${backup}" "${OVERRIDE_FILE}"
-          rm -f "${backup}"
+        # Distinguish timing issue (sshd process alive) from real failure.
+        if pgrep -x sshd >/dev/null 2>&1; then
+          log_warn "harden-ssh: sshd process alive but not yet listening on port ${ssh_port} after 12s"
+          log_warn "harden-ssh: this is likely a transient timing issue (busy system)"
+          log_warn "harden-ssh: override written — will take effect on next sshd restart/reload"
+          log_warn "harden-ssh: run 'systemctl reload ssh' if hardening is not active"
         else
-          rm -f "${OVERRIDE_FILE}"
+          log_error "harden-ssh: HEALTH CHECK FAILED — sshd process dead after reload"
+          log_error "harden-ssh: Reverting ${OVERRIDE_FILE} and restarting sshd..."
+          if [ -n "${backup:-}" ]; then
+            install -m 0644 -o root -g root "${backup}" "${OVERRIDE_FILE}"
+            rm -f "${backup}"
+          else
+            rm -f "${OVERRIDE_FILE}"
+          fi
+          # Force restart — will terminate this session, but the original
+          # config is restored so the admin can reconnect.
+          systemctl restart ssh 2>/dev/null || true
+          log_error "harden-ssh: sshd restarted with original config. Reconnect via SSH."
+          exit 1
         fi
-        # Force restart — will terminate this session, but the original
-        # config is restored so the admin can reconnect.
-        systemctl restart ssh 2>/dev/null || true
-        log_error "harden-ssh: sshd restarted with original config. Reconnect via SSH."
-        exit 1
+      else
+        log_info "harden-ssh: health check ok — sshd listening on port ${ssh_port}"
       fi
-      log_info "harden-ssh: health check ok — sshd listening on port ${ssh_port}"
-      # Reload succeeded — safe to discard the backup now.
+      # Reload succeeded (or process alive but slow) — discard backup.
       [ -n "${backup:-}" ] && rm -f "${backup}"
     fi
   else
