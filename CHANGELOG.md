@@ -4,6 +4,33 @@ All notable changes to this project will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.4] - 2026-07-19
+
+### Added (issue #54)
+
+- **Unit tests for backup scripts** — Self-copy guard detection, `--help` smoke
+  tests for backup-restore and backup-stagger, root-error assertion for
+  restore dry-run. (`test/bats/unit_backup.bats`)
+
+## [0.10.3] - 2026-07-19
+
+### Fixed (issue #54)
+
+- **backup-install.sh self-copy when run from installed location** — When
+  `litesoup backup configure` runs `backup-install.sh` from
+  `/usr/lib/litesoup/backup/`, `REPO_ROOT` resolves to `/usr/lib/litesoup`,
+  making source and destination the same directory. Fix compares resolved
+  paths and skips the copy if they match. (`backup/backup-install.sh`)
+
+## [0.10.2] - 2026-07-19
+
+### Fixed (issue #53)
+
+- **harden-ssh health check false-positive on busy systems** — Increased
+  poll from 3×2s to 6×2s (12s total). If sshd process is alive but port not
+  bound, log a warning and proceed — only revert if sshd is completely dead.
+  (`harden/harden-ssh.sh`)
+
 ## [0.10.1] - 2026-07-18
 
 ### Fixed (issue #50)
