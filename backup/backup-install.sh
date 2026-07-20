@@ -121,19 +121,28 @@ S3EOF
     fi
   fi
 
-  # 4. Copy backup scripts to /usr/lib/litesoup/backup/
-  log_info "backup-install: installing backup scripts to ${LITESOUP_LIB}/backup/"
-  if [ "${DRY_RUN}" = "1" ]; then
-    log_info "[DRYRUN] would install backup/*.sh -> ${LITESOUP_LIB}/backup/"
+  # 4. Copy backup scripts to /usr/lib/litesoup/backup/ (skip when already
+  #    installed — running from the installed directory makes source and
+  #    destination the same file, which `install` refuses).
+  local backup_src
+  backup_src="$(cd "${REPO_ROOT}/backup" && pwd)"
+  local backup_dst="${LITESOUP_LIB}/backup"
+  if [ "${backup_src}" = "$(cd "${backup_dst}" 2>/dev/null && pwd || echo '')" ]; then
+    log_info "backup-install: already installed — skipping script copy"
   else
-    run_or_dryrun mkdir -p "${LITESOUP_LIB}/backup/lib"
-    for f in "${REPO_ROOT}/backup/"*.sh; do
-      run_or_dryrun install -m 0755 "${f}" "${LITESOUP_LIB}/backup/"
-    done
-    for f in "${REPO_ROOT}/backup/lib/"*.sh; do
-      run_or_dryrun install -m 0644 "${f}" "${LITESOUP_LIB}/backup/lib/"
-    done
-    run_or_dryrun install -m 0644 "${REPO_ROOT}/install/lib/notify.sh" "${LITESOUP_LIB}/install/lib/"
+    log_info "backup-install: installing backup scripts to ${backup_dst}/"
+    if [ "${DRY_RUN}" = "1" ]; then
+      log_info "[DRYRUN] would install backup/*.sh -> ${backup_dst}/"
+    else
+      run_or_dryrun mkdir -p "${backup_dst}/lib"
+      for f in "${REPO_ROOT}/backup/"*.sh; do
+        run_or_dryrun install -m 0755 "${f}" "${backup_dst}/"
+      done
+      for f in "${REPO_ROOT}/backup/lib/"*.sh; do
+        run_or_dryrun install -m 0644 "${f}" "${backup_dst}/lib/"
+      done
+      run_or_dryrun install -m 0644 "${REPO_ROOT}/install/lib/notify.sh" "${LITESOUP_LIB}/install/lib/"
+    fi
   fi
 
   # 5. Create backup directories for existing site users
