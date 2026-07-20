@@ -131,6 +131,39 @@ setup() {
   [[ "${output}" == *"litesoup backup-install"* ]]
 }
 
+@test "backup-install.sh has self-copy guard (issue #54)" {
+  # When running from /usr/lib/litesoup/backup/, REPO_ROOT resolves to
+  # /usr/lib/litesoup, making source and destination the same directory.
+  # The guard compares resolved paths and skips the copy if they match.
+  grep -qE 'backup_src.*=\s*"\$\(cd "\${REPO_ROOT}/backup" && pwd\)"' \
+    "${REPO_ROOT}/backup/backup-install.sh"
+}
+
+@test "backup-restore --help exits 0" {
+  if [ ! -f "${REPO_ROOT}/backup/backup-restore.sh" ]; then
+    skip "backup-restore.sh not available"
+  fi
+  run -0 bash "${REPO_ROOT}/backup/backup-restore.sh" --help
+  [[ "${output}" == *"litesoup backup-restore"* ]]
+}
+
+@test "backup-restore --dry-run without --domain fails with root error" {
+  if [ ! -f "${REPO_ROOT}/backup/backup-restore.sh" ]; then
+    skip "backup-restore.sh not available"
+  fi
+  run bash "${REPO_ROOT}/backup/backup-restore.sh" --dry-run
+  [[ "${output}" == *"must run as root"* ]]
+  [ "${status}" -ne 0 ]
+}
+
+@test "backup-stagger --help exits 0" {
+  if [ ! -f "${REPO_ROOT}/backup/backup-stagger.sh" ]; then
+    skip "backup-stagger.sh not available"
+  fi
+  run -0 bash "${REPO_ROOT}/backup/backup-stagger.sh" --help
+  [[ "${output}" == *"litesoup backup-stagger"* ]]
+}
+
 # --- notify.sh: sanity check ---
 
 @test "notify.sh sources without error" {
