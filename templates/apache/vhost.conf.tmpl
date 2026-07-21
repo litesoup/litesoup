@@ -25,6 +25,18 @@ __HTTP_REDIRECT__
         Require all granted
     </Directory>
 
+    # Block PHP execution in wp-content/uploads (mitigates file-upload RCE)
+    <Directory __DOCROOT__/wp-content/uploads>
+        <FilesMatch \.php$>
+            Require all denied
+        </FilesMatch>
+    </Directory>
+
+    # Block direct access to wp-content/debug.log (prevents credential leaks)
+    <Files "debug.log">
+        Require all denied
+    </Files>
+
     <FilesMatch \.php$>
         SetHandler "proxy:unix:__FPM_SOCKET__|fcgi://localhost"
     </FilesMatch>
