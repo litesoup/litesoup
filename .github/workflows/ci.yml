@@ -20,7 +20,9 @@ jobs:
         run: |
           # -x: follow sourced files via `# shellcheck source=` annotations
           # -e SC1091: ignore "can't follow runtime-resolved sources" info; -x covers the real ones
-          shellcheck -x -e SC1091 \
+          # -e SC2153: ignore "may not be assigned" — vars like DOMAIN are set by callers via scope
+          # -e SC2034: ignore "appears unused" — vars like WAF_ENABLED/VHOST_DOCROOT are consumed via write_vhost scope
+          shellcheck -x -e SC1091 -e SC2153 -e SC2034 \
                      install/install-stack.sh \
                      install/lib/*.sh \
                      site/*.sh \
