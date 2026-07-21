@@ -92,6 +92,18 @@ write_vhost() {
         RedirectMatch 404 /(auth|SDK|cgi-bin|developmentserver)(/.*)?$
     </Directory>
 
+    # Block PHP execution in wp-content/uploads (mitigates file-upload RCE)
+    <Directory ${VHOST_DOCROOT}/wp-content/uploads>
+        <FilesMatch \.php$>
+            Require all denied
+        </FilesMatch>
+    </Directory>
+
+    # Block direct access to wp-content/debug.log (prevents credential leaks)
+    <Files "debug.log">
+        Require all denied
+    </Files>
+
     <FilesMatch \.php$>
         SetHandler "proxy:unix:${socket}|fcgi://localhost"
     </FilesMatch>
