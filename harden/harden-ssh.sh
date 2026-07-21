@@ -268,6 +268,33 @@ EOF
       fi
       # Reload succeeded (or process alive but slow) — discard backup.
       [ -n "${backup:-}" ] && rm -f "${backup}"
+
+      # 5c. SOCKET ACTIVATION CHECK (issue #58). Ubuntu 24.04 ships
+      #     socket-activated SSH by default. When systemctl daemon-reload
+      #     runs (e.g. from litesoup backup configure), systemd can silently
+      #     deactivate the socket unit. Fix: switch to standalone sshd.
+      if systemctl is-active ssh.socket >/dev/null 2>&1; then
+        log_warn "harden-ssh: ssh.socket is active (Ubuntu 24.04 socket-activated SSH)"
+        log_warn "harden-ssh:    a later daemon-reload can silently kill port 22."
+        log_info "harden-ssh: switching to traditional standalone sshd..."
+        if [ "${DRY_RUN}" = "1" ]; then
+          log_info "[DRYRUN] would run: systemctl disable --now ssh.socket"
+          log_info "[DRYRUN] would run: systemctl enable --now ssh.service"
+        else
+          systemctl disable --now ssh.socket 2>/dev/null || true
+          systemctl enable --now ssh.service 2>/dev/null || true
+          if ss -tlnp 2>/dev/null | grep -qE ":${ssh_port}\b.*sshd"; then
+            log_info "harden-ssh: sshd now owns port ${ssh_port} directly"
+          else
+            sleep 2
+            if ss -tlnp 2>/dev/null | grep -qE ":${ssh_port}\b.*sshd"; then
+              log_info "harden-ssh: sshd now owns port ${ssh_port} directly"
+            else
+              log_warn "harden-ssh: could not verify sshd owns port directly"
+            fi
+          fi
+        fi
+      fi
     fi
   else
     log_info "harden-ssh: no override changes — skipping reload"
