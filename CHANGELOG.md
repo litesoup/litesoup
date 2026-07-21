@@ -4,6 +4,32 @@ All notable changes to this project will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.5] - 2026-07-21
+
+### Added
+
+- **6G firewall (WAF)** — New `--waf` flag on `site-create.sh`. Blocks
+  exploit scanners, AI crawlers, bad request methods, and spam referers
+  via Apache-level rules. Exempts wp-admin and wp-json to avoid false
+  positives. (`templates/apache/waf-6g.conf`, `templates/apache/vhost.conf.tmpl`,
+  `site/_vhost_render.sh`, `site/site-create.sh`)
+
+### Fixed
+
+- **SSH socket activation conflict (regression on Ubuntu 24.04)** —
+  Ubuntu 24.04 ships socket-activated SSH by default (`ssh.socket`).
+  When `systemctl daemon-reload` runs (e.g. from `litesoup backup
+  configure`), systemd can silently deactivate the socket unit, taking
+  port 22 down with zero error logs. Script now detects `ssh.socket`
+  and switches to traditional standalone sshd. (`harden/harden-ssh.sh`)
+- **`.git/` directory probing** — Apache now returns 404 for
+  `.git/` paths. (`templates/apache/vhost.conf.tmpl`)
+- **PHP execution in `wp-content/uploads/`** — Direct PHP access in
+  uploads is blocked (mitigates file-upload RCE).
+  (`templates/apache/vhost.conf.tmpl`, `site/_vhost_render.sh`)
+- **`wp-content/debug.log` access** — Direct log reads return 403.
+  (`templates/apache/vhost.conf.tmpl`, `site/_vhost_render.sh`)
+
 ## [0.10.4] - 2026-07-19
 
 ### Added (issue #54)
