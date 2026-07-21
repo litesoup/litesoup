@@ -49,6 +49,7 @@ POOL_TIER="medium"
 GIT_REPO=""
 GIT_BRANCH=""
 FRAMEWORK="wordpress"
+WAF_ENABLED=0
 
 usage() {
   cat <<'EOF'
@@ -80,6 +81,7 @@ Usage: sudo bash site-create.sh --domain=DOMAIN [--user=NAME] [--php=X.Y] \
                  generic:   empty docroot, no framework-specific steps
   --git-repo=URL Clone this Git repo into the docroot instead of downloading
                  a fresh WordPress. Accepts https:// and git@... URLs.
+  --waf           Enable 6G firewall for this site (blocks exploit scanners, bad bots, spam referers)
   --git-branch=B Branch/tag/SHA to check out (default: repo default branch)
 EOF
 }
@@ -94,6 +96,7 @@ parse_args() {
       --tier=*)       POOL_TIER="${arg#*=}" ;;
       --tls=*)        TLS_MODE="${arg#*=}" ;;
       --email=*)      TLS_EMAIL="${arg#*=}" ;;
+      --waf)          WAF_ENABLED=1 ;;
       --git-repo=*)   GIT_REPO="${arg#*=}" ;;
       --git-branch=*) GIT_BRANCH="${arg#*=}" ;;
       --framework=*)  FRAMEWORK="${arg#*=}" ;;

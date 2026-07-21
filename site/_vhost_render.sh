@@ -4,6 +4,7 @@
 #
 # write_vhost expects these vars in scope:
 #   DOMAIN, DOCROOT, VHOST_DOCROOT, SITE_USER, PHP_VERSION, TLS_MODE, REPO_ROOT, DRY_RUN
+#   WAF_ENABLED (optional: set to 1 to enable 6G firewall rules for this site)
 
 [ -n "${LITESOUP_VHOST_RENDER_SH:-}" ] && return 0
 LITESOUP_VHOST_RENDER_SH=1
@@ -53,9 +54,27 @@ existing_site_docroot() {
 # self-signed. Uses VHOST_DOCROOT (which may differ from DOCROOT for
 # Laravel/generic frameworks where DocumentRoot points to /public).
 write_vhost() {
-  local socket vhost http_redirect="" https_block="" cert_paths cert key
+  local socket vhost http_redirect="" https_block="" cert_paths cert key waf_include=""
+  local waf_dir="/etc/apache2/litesoup-waf.d"
   socket="$(php_fpm_socket_for_user "${SITE_USER}" "${PHP_VERSION}")"
   vhost="/etc/apache2/sites-available/${DOMAIN}.conf"
+  # Auto-detect WAF from existing config
+  if [ "${WAF_ENABLED:-0}" != "1" ] && [ -f "${waf_dir}/${DOMAIN}.conf" ]; then
+    WAF_ENABLED=1
+    log_info "site: 6G firewall detected (existing config) for ${DOMAIN}"
+  fi
+  if [ "${WAF_ENABLED:-0}" = "1" ]; then
+    mkdir -p "${waf_dir}"
+    local waf_file="${waf_dir}/${DOMAIN}.conf"
+    if [ -f "${REPO_ROOT}/templates/apache/waf-6g.conf" ]; then
+      cp "${REPO_ROOT}/templates/apache/waf-6g.conf" "${waf_file}"
+      chmod 644 "${waf_file}"
+      waf_include="IncludeOptional ${waf_file}"
+      log_info "site: 6G firewall enabled for ${DOMAIN}"
+    else
+      log_warn "site: WAF rules template not found at ${REPO_ROOT}/templates/apache/waf-6g.conf"
+    fi
+  fi
 
   if [ "${TLS_MODE}" != "none" ]; then
     # HTTP -> HTTPS 301 (with .well-known/acme-challenge exception so renewal works)
@@ -130,6 +149,7 @@ out = (tmpl
   .replace('__DOCROOT__',        '''${VHOST_DOCROOT}''')
   .replace('__FPM_SOCKET__',     '''${socket}''')
   .replace('__HTTP_REDIRECT__',  '''${http_redirect}''')
+  .replace('__WAF_RULES__',      '''${waf_include}''')
   .replace('__HTTPS_BLOCK__',    '''${https_block}''')
 )
 open('${vhost}', 'w').write(out)
