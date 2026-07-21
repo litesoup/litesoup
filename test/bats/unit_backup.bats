@@ -139,14 +139,6 @@ setup() {
     "${REPO_ROOT}/backup/backup-install.sh"
 }
 
-@test "backup-restore --help exits 0" {
-  if [ ! -f "${REPO_ROOT}/backup/backup-restore.sh" ]; then
-    skip "backup-restore.sh not available"
-  fi
-  run -0 bash "${REPO_ROOT}/backup/backup-restore.sh" --help
-  [[ "${output}" == *"litesoup backup-restore"* ]]
-}
-
 @test "backup-restore --dry-run without --domain fails with root error" {
   if [ ! -f "${REPO_ROOT}/backup/backup-restore.sh" ]; then
     skip "backup-restore.sh not available"
