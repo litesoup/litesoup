@@ -85,6 +85,11 @@ write_vhost() {
         Options -Indexes +FollowSymLinks
         AllowOverride All
         Require all granted
+        # Block version control + env file exposure
+        RedirectMatch 404 \\.(git|svn|hg)(/.*)?$
+        RedirectMatch 404 \\.env$
+        # Block common scanner paths
+        RedirectMatch 404 /(auth|SDK|cgi-bin|developmentserver)(/.*)?$
     </Directory>
 
     <FilesMatch \.php$>

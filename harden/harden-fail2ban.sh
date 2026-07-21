@@ -52,10 +52,11 @@ Options:
   --dry-run   Print actions without executing
   --help      Show this help
 
-Installs fail2ban (if missing) and writes two managed jails under
+Installs fail2ban (if missing) and writes three managed jails under
 /etc/fail2ban/jail.d/:
   - litesoup-sshd.local         [sshd] — systemd backend, 3 retries / 1h ban
   - litesoup-apache-auth.local  [apache-auth] — apache2 error logs, 5 retries
+  - litesoup-apache-badbots.local  [apache-badbots] — scanner user agents, 1 hit / 7d ban
 
 The apache-auth jail is skipped (with a warning) if /var/log/apache2/ is
 absent (Apache not installed).
@@ -162,6 +163,24 @@ bantime = 3600
 EOF
 )"
     write_jail_if_changed "${APACHE_JAIL}" "${apache_content}"$'\n'
+
+    # 3b. apache-badbots jail — blocks known scanner user agents at the
+    #     fail2ban level (complements the vhost-level WAF rules).
+    local badbots_content
+    badbots_content="$(cat <<'EOF'
+# /etc/fail2ban/jail.d/litesoup-apache-badbots.local — managed by litesoup harden-fail2ban.sh.
+# Re-running harden-fail2ban.sh may overwrite this file.
+[apache-badbots]
+enabled = true
+port = http,https
+logpath = /var/log/apache2/*access.log
+maxretry = 1
+bantime = 604800
+findtime = 86400
+EOF
+)"
+    local BADBOTS_JAIL="${JAIL_DIR}/litesoup-apache-badbots.local"
+    write_jail_if_changed "${BADBOTS_JAIL}" "${badbots_content}"$'\n'
   else
     apache_skipped=1
     log_warn "fail2ban: ${APACHE_LOG_DIR} not found — skipping apache-auth jail (Apache not installed?)"
@@ -180,7 +199,7 @@ EOF
   # 6. Smoke tests + final status (skipped in dry-run).
   if [ "${DRY_RUN}" = "1" ]; then
     log_info "[DRYRUN] would run: fail2ban-client status sshd"
-    [ "${apache_skipped}" = "0" ] && log_info "[DRYRUN] would run: fail2ban-client status apache-auth"
+    [ "${apache_skipped}" = "0" ] && log_info "[DRYRUN] would run: fail2ban-client status apache-auth" && log_info "[DRYRUN] would run: fail2ban-client status apache-badbots"
     log_info "[DRYRUN] would run: fail2ban-client status"
     return 0
   fi
@@ -206,6 +225,11 @@ EOF
       exit 1
     fi
     log_info "fail2ban: apache-auth jail loaded"
+    if ! fail2ban-client status apache-badbots; then
+      log_error "fail2ban: apache-badbots jail failed to load"
+      exit 1
+    fi
+    log_info "fail2ban: apache-badbots jail loaded"
   fi
 
   fail2ban-client status
