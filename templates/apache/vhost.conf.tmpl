@@ -23,6 +23,7 @@ __HTTP_REDIRECT__
         Options -Indexes +FollowSymLinks
         AllowOverride All
         Require all granted
+        RedirectMatch 404 \.git(/.*)?$
     </Directory>
 
     <FilesMatch \.php$>
