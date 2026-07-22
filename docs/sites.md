@@ -67,6 +67,27 @@ sudo bash site/site-create.sh \
 When the script finishes it prints the install URL, e.g.
 `http://example.test/wp-admin/install.php`.
 
+## Import an existing site
+
+Use `site-import.sh` when you have a WordPress site already running elsewhere
+and want to migrate it to this server. The script accepts a git repo URL and/or
+a database dump file.
+
+```bash
+# Import from a git repo (WordPress files)
+sudo bash site/site-import.sh --domain=example.com --git-repo=git@github.com:org/repo.git
+
+# Import from a git repo + SQL dump
+sudo bash site/site-import.sh --domain=example.com --git-repo=git@github.com:org/repo.git --db-dump=./example.sql
+
+# Import a flat docroot (no git) from a local archive
+sudo bash site/site-import.sh --domain=example.com --archive=/path/to/site.tar.gz
+```
+
+The script creates the system user, MariaDB database + user, PHP-FPM pool,
+Apache vhost, and imports your content. Run `site-import.sh --help` for all
+available flags.
+
 ## Switch PHP version
 
 Use `site-set-php.sh` when you want to test a plugin against a different
@@ -138,6 +159,20 @@ Drop TLS back to HTTP-only:
 ```bash
 sudo bash site/site-set-tls.sh --domain=example.com --tls=none
 ```
+
+## Set up Git webhook auto-deploy
+
+Use `site-set-webhook.sh` to configure automatic deployments from a Git
+repository. Every time you push to the configured branch, the server pulls
+the latest code automatically.
+
+```bash
+sudo bash site/site-set-webhook.sh --domain=example.com
+```
+
+The script configures a webhook endpoint and creates a systemd service that
+runs `git pull` on the docroot when triggered. The webhook URL is printed
+after setup — add it to your Git provider (GitHub, GitLab, etc.).
 
 ## Delete a site
 
