@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.6] - 2026-07-22
+
+### Fixed (issue #69)
+
+- **CI: bats unit test 79 (restart guard)** — Comment marker `# Force restart`
+  was on the line before `systemctl restart ssh` instead of the same line,
+  so the `grep -v` filter missed it. Moved to same line so the exception
+  is correctly excluded. (`harden/harden-ssh.sh`, `test/bats/unit_harden.bats`)
+- **CI: shellcheck failures in `site/site-import.sh`** — Added `-e SC2016`
+  (literal grep patterns in single quotes, intentional) and `-e SC1090`
+  (non-constant source for REDIS_ENV_FILE, intentional) to CI exception
+  list. Only warnings/info, no actual bugs. (`.github/workflows/ci.yml`)
+
 ## [0.10.5] - 2026-07-21
 
 ### Added
