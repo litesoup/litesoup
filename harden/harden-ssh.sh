@@ -257,9 +257,7 @@ EOF
           else
             rm -f "${OVERRIDE_FILE}"
           fi
-          # Force restart — will terminate this session, but the original
-          # config is restored so the admin can reconnect.
-          systemctl restart ssh 2>/dev/null || true
+          systemctl restart ssh 2>/dev/null || true  # Force restart — will terminate this session, but the original config is restored so the admin can reconnect.
           log_error "harden-ssh: sshd restarted with original config. Reconnect via SSH."
           exit 1
         fi
