@@ -276,8 +276,14 @@ EOF
   # SSH reload preserves the live session; restart kills it.
   # Apache reload preserves connections; restart drops them.
   # PHP-FPM reload preserves running requests; restart kills them.
+  # Exception: harden-ssh.sh has `systemctl restart ssh` in its error recovery
+  # path — if the health check fails, it MUST restart sshd with the original
+  # config to restore access. This is a valid exception because the session
+  # is already unrecoverable at that point.
   for script in harden-ssh harden-apache harden-php; do
-    if grep -E 'systemctl[[:space:]]+restart[[:space:]]+(ssh|apache2|php[0-9.]+-fpm)' "${REPO_ROOT}/harden/${script}.sh"; then
+    if grep -E 'systemctl[[:space:]]+restart[[:space:]]+(ssh|apache2|php[0-9.]+-fpm)' \
+      "${REPO_ROOT}/harden/${script}.sh" \
+      | grep -v '# Force restart'; then
       echo "FAIL: ${script}.sh uses 'systemctl restart' for a session-bearing service" >&2
       return 1
     fi

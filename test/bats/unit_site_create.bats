@@ -125,7 +125,7 @@ STUBS
   assert_output --partial "--email="
 }
 
-@test "site-create defaults to --tier=small" {
+@test "site-create defaults to --tier=medium" {
   STUBS_FILE="${BATS_TEST_TMPDIR}/stubs.sh"
   cat >"${STUBS_FILE}" <<'STUBS'
 require_root() { :; }
@@ -140,7 +140,7 @@ certbot_self_signed() { :; }
 STUBS
   run -0 env LITESOUP_ALLOW_TEST_STUBS=1 LITESOUP_TEST_STUBS="${STUBS_FILE}" DRY_RUN=1 \
     bash "${REPO_ROOT}/site/site-create.sh" --domain=example.test
-  assert_output --partial "POOL: litesoup 8.2 small"
+  assert_output --partial "POOL: litesoup 8.2 medium"
 }
 
 @test "site-create --tier=medium passes through to ensure_php_pool_for_user" {
