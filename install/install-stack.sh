@@ -270,6 +270,11 @@ main() {
       "/etc/apache2/sites-available/000-default.conf"
     run_or_dryrun a2ensite 000-default.conf 2>/dev/null || true
   fi
+  # Ensure SSL snakeoil cert exists for the default vhost's port 443 catch-all.
+  # Any domain pointed at this server without its own site gets the LiteSoup
+  # landing page over HTTPS (with a browser 'Not Secure' warning) instead of
+  # falling through to another site's cert.
+  run_or_dryrun ensure_pkgs ssl-cert
 
   # Install the landing page served by the default vhost (direct IP access).
   if [ -f "${repo_root}/templates/apache/default-index.html" ]; then

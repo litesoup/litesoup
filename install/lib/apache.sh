@@ -5,7 +5,7 @@
 LITESOUP_APACHE_SH=1
 
 ensure_apache() {
-  ensure_pkgs apache2 apache2-utils
+  ensure_pkgs apache2 apache2-utils ssl-cert
 
   # Switch to mpm_event (default mpm on Ubuntu is prefork-or-event depending; force event)
   if apache2ctl -V 2>/dev/null | grep -q 'Server MPM:.*prefork'; then
