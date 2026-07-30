@@ -153,7 +153,11 @@ main() {
   if [ "${SKIP_DB}" != "1" ]; then
     local db_ts
     db_ts="$(date +%s)"
-    timeout 300 bash -c "backup_dump_db \"${DOMAIN}\" \"${backup_dir}\"" || {
+    timeout 300 bash -c "
+REPO_ROOT='${REPO_ROOT}'
+source \"\${REPO_ROOT}/backup/lib/common.sh\"
+backup_dump_db '${DOMAIN}' '${backup_dir}'
+" || {
       local db_ec=$?
       if [ "${db_ec}" -eq 124 ]; then
         notify_event "backup TIMEOUT: ${DOMAIN}" "Database dump timed out (>300s) for ${DOMAIN}"
@@ -184,7 +188,11 @@ main() {
     fi
     local fs_ts
     fs_ts="$(date +%s)"
-    timeout 600 bash -c "backup_archive \"${docroot}\" \"${files_archive}\"" || {
+    timeout 600 bash -c "
+REPO_ROOT='${REPO_ROOT}'
+source \"\${REPO_ROOT}/backup/lib/common.sh\"
+backup_archive '${docroot}' '${files_archive}'
+" || {
       local fs_ec=$?
       rm -f "${exclude_file:-}"
       if [ "${fs_ec}" -eq 124 ]; then
