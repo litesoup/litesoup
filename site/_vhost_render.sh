@@ -158,5 +158,15 @@ open('${vhost}', 'w').write(out)
   a2ensite "${DOMAIN}.conf" >/dev/null
   apache2ctl configtest \
     || { log_error "site-create: apache configtest failed for ${DOMAIN}"; return 1; }
+
+  # Write vhost metadata for backup scripts (backup/lib/common.sh reads this)
+  local vhost_meta_dir="/etc/litesoup/vhost"
+  mkdir -p "${vhost_meta_dir}"
+  cat > "${vhost_meta_dir}/${DOMAIN}.conf" <<VHOST_META
+SITE_USER=${SITE_USER}
+DOCROOT=${DOCROOT}
+VHOST_META
+  chmod 644 "${vhost_meta_dir}/${DOMAIN}.conf"
+
   systemctl reload apache2
 }

@@ -148,6 +148,7 @@ backup_dump_db() {
   fi
 
   mkdir -p "${dest_dir}"
+  chown "${user}:${user}" "${dest_dir}"
   sudo -H -u "${user}" wp --path="${docroot}" db export "${dest_dir}/database.sql" 2>/dev/null || {
     log_error "backup: wp db export failed for ${domain}"
     return 1

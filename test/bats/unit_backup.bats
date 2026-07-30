@@ -193,11 +193,11 @@ setup() {
 }
 
 @test "backup-site.sh has timeout on db dump" {
-  grep -q 'timeout 300.*backup_dump_db' "${REPO_ROOT}/backup/backup-site.sh"
+  grep -qz 'timeout 300.*backup_dump_db' "${REPO_ROOT}/backup/backup-site.sh"
 }
 
 @test "backup-site.sh has timeout on file archive" {
-  grep -q 'timeout 600.*backup_archive' "${REPO_ROOT}/backup/backup-site.sh"
+  grep -qz 'timeout 600.*backup_archive' "${REPO_ROOT}/backup/backup-site.sh"
 }
 
 @test "backup-site.sh logs elapsed time" {
