@@ -35,6 +35,7 @@ if [ "${LITESOUP_ALLOW_TEST_STUBS:-0}" = "1" ] \
 fi
 
 DOMAIN=""
+SITE_NAME_ARG=""
 PHP_VERSION=""
 TLS_MODE="none"          # populated by detect_tls_mode below
 
@@ -42,9 +43,10 @@ usage() {
   cat <<'EOF'
 litesoup site-set-php -- change PHP version of an existing site
 
-Usage: sudo bash site-set-php.sh --domain=DOMAIN --php=X.Y [--dry-run]
-  --domain=D  domain of the existing site
-  --php=X.Y   new PHP version (must be installed by install-stack)
+Usage: sudo bash site-set-php.sh (--name=APP | --domain=D) --php=X.Y [--dry-run]
+  --name=APP   application slug of the site (preferred; resolved to its domain)
+  --domain=D   domain of the existing site (backward-compat alias)
+  --php=X.Y    new PHP version (must be installed by install-stack)
 EOF
 }
 
@@ -52,6 +54,7 @@ parse_args() {
   local arg
   for arg in "$@"; do
     case "${arg}" in
+      --name=*)   SITE_NAME_ARG="${arg#*=}" ;;
       --domain=*)  DOMAIN="${arg#*=}" ;;
       --php=*)     PHP_VERSION="${arg#*=}" ;;
       --dry-run)   DRY_RUN=1 ;;
@@ -60,7 +63,13 @@ parse_args() {
     esac
   done
   export DRY_RUN
-  [ -n "${DOMAIN}" ]      || { log_error "--domain is required"; usage; exit 64; }
+  if [ -n "${SITE_NAME_ARG}" ] && [ -z "${DOMAIN}" ]; then
+    DOMAIN="$(resolve_name_to_domain "${SITE_NAME_ARG}" 2>/dev/null || true)"
+    if [ -z "${DOMAIN}" ]; then
+      log_error "--name=${SITE_NAME_ARG}: no site with that app name found"; usage; exit 64
+    fi
+  fi
+  [ -n "${DOMAIN}" ]      || { log_error "--domain is required (or --name)"; usage; exit 64; }
   [ -n "${PHP_VERSION}" ] || { log_error "--php is required";    usage; exit 64; }
   validate_php_version "${PHP_VERSION}" \
     || { log_error "unsupported PHP version: ${PHP_VERSION} (allowed: ${SUPPORTED_PHP_VERSIONS[*]})"; exit 64; }

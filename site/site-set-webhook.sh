@@ -32,6 +32,7 @@ LITESOUP_WEBHOOK_DIR="/etc/litesoup/webhooks"
 WEBHOOK_LISTENER="/usr/lib/litesoup/site/webhook-listener.py"
 
 DOMAIN=""
+SITE_NAME_ARG=""
 SITE_USER=""
 SECRET=""
 PORT=""
@@ -43,10 +44,11 @@ usage() {
   cat <<'EOF'
 litesoup site-set-webhook — set up Git webhook auto-deploy for a site
 
-Usage: sudo bash site-set-webhook.sh --domain=DOMAIN [options]
+Usage: sudo bash site-set-webhook.sh (--name=APP | --domain=D) [options]
 
 Options:
-  --domain=DOMAIN      Required. Site domain.
+  --name=APP           Application slug of the site (preferred; docroot resolved).
+  --domain=DOMAIN      Domain of the site (backward-compat alias).
   --user=NAME          System user (auto-detected).
   --secret=STRING      Webhook secret (auto-generated if omitted).
   --port=PORT          Listener port (default: auto from domain hash).
@@ -57,10 +59,10 @@ Options:
   --help, -h           Show this help.
 
 Examples:
-  sudo bash site-set-webhook.sh --domain=example.com
-  sudo bash site-set-webhook.sh --domain=example.com --secret=mypass
-  sudo bash site-set-webhook.sh --domain=example.com --post-deploy="npm run build"
-  sudo bash site-set-webhook.sh --domain=example.com --remove
+  sudo bash site-set-webhook.sh --name=myapp
+  sudo bash site-set-webhook.sh --name=myapp --secret=mypass
+  sudo bash site-set-webhook.sh --name=myapp --post-deploy="npm run build"
+  sudo bash site-set-webhook.sh --name=myapp --remove
 EOF
 }
 
@@ -68,6 +70,7 @@ parse_args() {
   local arg
   for arg in "$@"; do
     case "${arg}" in
+      --name=*)       SITE_NAME_ARG="${arg#*=}" ;;
       --domain=*)     DOMAIN="${arg#*=}" ;;
       --user=*)       SITE_USER="${arg#*=}" ;;
       --secret=*)     SECRET="${arg#*=}" ;;
@@ -81,6 +84,12 @@ parse_args() {
     esac
   done
   export DRY_RUN
+  if [ -n "${SITE_NAME_ARG}" ] && [ -z "${DOMAIN}" ]; then
+    DOMAIN="$(resolve_name_to_domain "${SITE_NAME_ARG}" 2>/dev/null || true)"
+    if [ -z "${DOMAIN}" ]; then
+      log_error "--name=${SITE_NAME_ARG}: no site with that app name found"; usage; exit 64
+    fi
+  fi
 }
 
 main() {
@@ -88,7 +97,7 @@ main() {
   require_root
 
   if [ -z "${DOMAIN}" ]; then
-    log_error "--domain is required"; usage; exit 64
+    log_error "--domain (or --name) is required"; usage; exit 64
   fi
 
   # 1. Resolve site user
@@ -96,7 +105,13 @@ main() {
     SITE_USER="$(existing_site_owner "${DOMAIN}" 2>/dev/null || echo "${DEFAULT_SITE_USER}")"
   fi
 
-  local docroot="/home/${SITE_USER}/webapps/${DOMAIN}"
+  # Docroot derives from the app SITE_NAME (stable slug); fall back to metadata
+  # or domain for pre --name sites.
+  local docroot
+  docroot="$(awk -F= -v k=DOCROOT '$1==k {print $2; exit}' "/etc/litesoup/vhost/${DOMAIN}.conf" 2>/dev/null || true)"
+  if [ -z "${docroot}" ]; then
+    docroot="/home/${SITE_USER}/webapps/${SITE_NAME_ARG:-${DOMAIN}}"
+  fi
   local config_file="${LITESOUP_WEBHOOK_DIR}/${DOMAIN}.conf"
   local service_name="litesoup-webhook@${DOMAIN}"
 

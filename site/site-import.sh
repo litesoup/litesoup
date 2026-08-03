@@ -54,6 +54,7 @@ fi
 # ── Defaults ──────────────────────────────────────────────────────────────────
 
 DOMAIN=""
+SITE_NAME=""
 GIT_REPO=""
 GIT_BRANCH=""
 DB_DUMP=""
@@ -74,10 +75,12 @@ usage() {
   cat <<'EOF'
 litesoup site-import — import an existing WordPress site
 
-Usage: sudo bash site-import.sh --domain=DOMAIN --git-repo=URL --db-dump=PATH \
+Usage: sudo bash site-import.sh --name=NAME --domain=DOMAIN --git-repo=URL --db-dump=PATH \
                                 --old-url=URL [options]
 
 Required:
+  --name=NAME          App slug (REQUIRED). Names the docroot dir, DB, cache &
+                       logs. Never changes; domain is a separate property.
   --domain=DOMAIN      Site domain (e.g. example.com).
   --git-repo=URL       Git repository URL containing the site files.
   --db-dump=PATH       Path to a .sql or .sql.gz database dump.
@@ -97,6 +100,7 @@ Options:
 
 Examples:
   sudo bash site-import.sh \
+    --name=example \
     --domain=example.com \
     --git-repo=git@github.com:org/repo.git \
     --db-dump=/tmp/site-db.sql.gz \
@@ -111,6 +115,7 @@ parse_args() {
   local arg
   for arg in "$@"; do
     case "${arg}" in
+      --name=*)         SITE_NAME="${arg#*=}" ;;
       --domain=*)       DOMAIN="${arg#*=}" ;;
       --git-repo=*)     GIT_REPO="${arg#*=}" ;;
       --git-branch=*)   GIT_BRANCH="${arg#*=}" ;;
@@ -136,11 +141,15 @@ parse_args() {
 # ── Validation ────────────────────────────────────────────────────────────────
 
 validate() {
+  [ -n "${SITE_NAME}" ] || { log_error "--name is required";        usage; exit 64; }
   [ -n "${DOMAIN}" ]   || { log_error "--domain is required";     usage; exit 64; }
   [ -n "${GIT_REPO}" ] || { log_error "--git-repo is required";   usage; exit 64; }
   [ -n "${DB_DUMP}" ]  || { log_error "--db-dump is required";    usage; exit 64; }
   [ -n "${OLD_URL}" ]  || { log_error "--old-url is required";    usage; exit 64; }
 
+  if ! [[ "${SITE_NAME}" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
+    log_error "invalid name: ${SITE_NAME} (must be a stable app slug: lowercase letters, digits, - and _; must not start with -)"; exit 64
+  fi
   if ! [[ "${DOMAIN}" =~ ^[A-Za-z0-9.-]+$ ]]; then
     log_error "invalid domain: ${DOMAIN}"; exit 64
   fi
@@ -177,10 +186,10 @@ validate() {
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-# db_ident_for — derive DB name from domain (same as site-create.sh).
+# db_ident_for — derive DB name from the site name (same as site-create.sh).
 db_ident_for() {
-  local d="$1"
-  echo "wp_$(echo "${d}" | tr '.-' '__' | cut -c1-29)"
+  local s="$1"
+  echo "wp_$(echo "${s}" | tr -c 'a-zA-Z0-9' '_' | cut -c1-29)"
 }
 
 # auto_detect_table_prefix — read the first few lines of a SQL dump to find
@@ -202,7 +211,7 @@ _import_db_user=""
 _import_db_pass=""
 create_database() {
   local db user pw
-  db="$(db_ident_for "${DOMAIN}")"
+  db="$(db_ident_for "${SITE_NAME}")"
   user="${db}"
   pw="$(set +o pipefail; LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom 2>/dev/null | head -c 24)"
   [ "${#pw}" -eq 24 ] || { log_error "site-import: failed to generate 24-char DB password"; exit 1; }
@@ -347,7 +356,7 @@ main() {
   create_database
 
   # 3. Create docroot
-  local docroot="/home/${SITE_USER}/webapps/${DOMAIN}"
+  local docroot="/home/${SITE_USER}/webapps/${SITE_NAME}"
   local vhost_docroot="${docroot}"
   run_or_dryrun install -d -o "${SITE_USER}" -g "${SITE_USER}" -m 0755 "${docroot}"
   DOCROOT="${docroot}"

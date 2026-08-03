@@ -41,6 +41,7 @@ if [ "${LITESOUP_ALLOW_TEST_STUBS:-0}" = "1" ] \
 fi
 
 DOMAIN=""
+SITE_NAME=""
 SITE_USER="${DEFAULT_SITE_USER}"
 PHP_VERSION="${PHP_VERSION_DEFAULT}"
 TLS_MODE="none"
@@ -55,12 +56,19 @@ usage() {
   cat <<'EOF'
 litesoup site-create -- provision a WordPress/Laravel site
 
-Usage: sudo bash site-create.sh --domain=DOMAIN [--user=NAME] [--php=X.Y] \
+Usage: sudo bash site-create.sh --name=NAME --domain=DOMAIN [--user=NAME] [--php=X.Y] \
                                 [--tier=small|medium|large] \
                                 [--tls=letsencrypt|self-signed|none] [--email=ADDR] \
                                 [--framework=wordpress|laravel|generic] \
                                 [--git-repo=URL] [--git-branch=B] \
                                 [--dry-run]
+  --name=NAME   Application slug (REQUIRED). Decouples the on-disk identity from the
+                domain: the docroot, DB name, cache keys and log files all derive from
+                NAME. The stable app slug never changes, while the domain (a network
+                property) can be updated later via site-set-domain.sh.
+                Directory created: /home/<user>/webapps/<NAME>/ (NOT the domain).
+  --domain=D    Domain this site answers to (ServerName). Can be changed later with
+                site-set-domain.sh without touching the filesystem.
   --user=NAME    System user that will own the docroot and run PHP-FPM
                  (default: litesoup; created if missing)
   --php=X.Y      PHP version for this site (default: PHP_VERSION_DEFAULT)
@@ -83,6 +91,10 @@ Usage: sudo bash site-create.sh --domain=DOMAIN [--user=NAME] [--php=X.Y] \
                  a fresh WordPress. Accepts https:// and git@... URLs.
   --waf           Enable 6G firewall for this site (blocks exploit scanners, bad bots, spam referers)
   --git-branch=B Branch/tag/SHA to check out (default: repo default branch)
+
+NOTE: --name is required. Operator upgrading from an older version should pass
+--name=<domain> (same value) to preserve the existing directory structure, then
+site-set-domain can change the domain freely later.
 EOF
 }
 
@@ -90,6 +102,7 @@ parse_args() {
   local arg
   for arg in "$@"; do
     case "${arg}" in
+      --name=*)       SITE_NAME="${arg#*=}" ;;
       --domain=*)     DOMAIN="${arg#*=}" ;;
       --user=*)       SITE_USER="${arg#*=}" ;;
       --php=*)        PHP_VERSION="${arg#*=}" ;;
@@ -106,6 +119,12 @@ parse_args() {
     esac
   done
   export DRY_RUN
+  if [ -z "${SITE_NAME}" ]; then
+    log_error "--name is required"; usage; exit 64
+  fi
+  if ! [[ "${SITE_NAME}" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
+    log_error "invalid name: ${SITE_NAME} (must be a stable app slug: lowercase letters, digits, - and _; must not start with -)"; exit 64
+  fi
   if [ -z "${DOMAIN}" ]; then
     log_error "--domain is required"; usage; exit 64
   fi
@@ -137,15 +156,15 @@ parse_args() {
   esac
 }
 
-# Derive a DB identifier from the domain (mariadb name limit = 64; we stay short).
+# Derive a DB identifier from the site name (mariadb name limit = 64; we stay short).
 db_ident_for() {
-  local d="$1"
-  echo "wp_$(echo "${d}" | tr '.-' '__' | cut -c1-29)"
+  local s="$1"
+  echo "wp_$(echo "${s}" | tr -c 'a-zA-Z0-9' '_' | cut -c1-29)"
 }
 
 create_database() {
   local db user pw
-  db="$(db_ident_for "${DOMAIN}")"
+  db="$(db_ident_for "${SITE_NAME}")"
   user="${db}"
   # Generate a 24-char alphanumeric password. Three quirks bundled in here:
   #   1. LC_ALL=C: BSD tr (macOS) emits "Illegal byte sequence" on binary
@@ -164,7 +183,7 @@ create_database() {
   # Caught on sg10.codetot.org acceptance, fixes litesoup/litesoup#9.
   # Path to the existing wp-config.php is overridable via env so bats tests can
   # exercise the reuse branch end-to-end without writing to /home/...
-  local existing_wp_config="${LITESOUP_TEST_EXISTING_WP_CONFIG:-/home/${SITE_USER}/webapps/${DOMAIN}/wp-config.php}"
+  local existing_wp_config="${LITESOUP_TEST_EXISTING_WP_CONFIG:-/home/${SITE_USER}/webapps/${SITE_NAME}/wp-config.php}"
   pw=""
   if [ -f "${existing_wp_config}" ]; then
     pw="$(awk -F"'" '/define\([[:space:]]*.DB_PASSWORD./{print $4; exit}' "${existing_wp_config}" 2>/dev/null || true)"
@@ -208,7 +227,7 @@ SQL
 }
 
 create_docroot() {
-  local docroot="/home/${SITE_USER}/webapps/${DOMAIN}"
+  local docroot="/home/${SITE_USER}/webapps/${SITE_NAME}"
   run_or_dryrun install -d -o "${SITE_USER}" -g "${SITE_USER}" -m 0755 "${docroot}"
   DOCROOT="${docroot}"
   # VHOST_DOCROOT is the DocumentRoot used in Apache vhost.
@@ -451,7 +470,7 @@ main() {
   parse_args "$@"
   require_root
 
-  log_info "site-create: ${DOMAIN} (owner=${SITE_USER}, php=${PHP_VERSION}, tls=${TLS_MODE})"
+  log_info "site-create: ${DOMAIN} (name=${SITE_NAME}, owner=${SITE_USER}, php=${PHP_VERSION}, tls=${TLS_MODE})"
   ensure_user "${SITE_USER}"
   ensure_php_pool_for_user "${SITE_USER}" "${PHP_VERSION}" "${POOL_TIER}"
   create_database
