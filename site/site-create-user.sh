@@ -5,7 +5,7 @@
 #   1. Create system user (with home, webapps dir)
 #   2. Install SSH public key
 #   3. Enable SFTP chroot (jailed — no shell commands, no sudo)
-#   4. Create a WordPress/Laravel site under /home/<user>/webapps/<domain>/
+#   4. Create a WordPress/Laravel site under /home/<user>/webapps/<name>/
 #   5. Fix directory permissions for SFTP chroot
 #
 # The resulting user is jailed: they can SFTP/SSH in but CANNOT run
@@ -160,6 +160,7 @@ main() {
       # Delegate to site-create.sh or site-import.sh
       SITE_USER="${NAME}" \
       bash "${SCRIPT_DIR}/site-create.sh" \
+        --name="${NAME}" \
         --domain="${DOMAIN}" \
         --user="${NAME}" \
         --php="${PHP_VERSION}" \
