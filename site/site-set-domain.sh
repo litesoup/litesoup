@@ -164,7 +164,9 @@ main() {
   resolve_site
 
   # 1. Re-issue the TLS cert for the new domain (LE needs webroot challenge).
-  if [ "${TLS_MODE}" = "letsencrypt" ]; then
+  if [ "${DRY_RUN}" = "1" ]; then
+    log_info "[DRYRUN] would re-issue TLS cert for ${NEW_DOMAIN} (tls=${TLS_MODE})"
+  elif [ "${TLS_MODE}" = "letsencrypt" ]; then
     certbot_obtain "${NEW_DOMAIN}" "${TLS_EMAIL}" "${DOCROOT}" \
       || { log_error "site-set-domain: LE failed for ${NEW_DOMAIN}; domain not switched. Re-run with --tls=self-signed or fix DNS first."; exit 1; }
   elif [ "${TLS_MODE}" = "self-signed" ]; then
@@ -202,7 +204,11 @@ main() {
 
   # 5. Best-effort: revoke the old-domain cert now that nothing serves it.
   if [ "${TLS_MODE}" != "none" ]; then
-    certbot_revoke "${old_domain}"
+    if [ "${DRY_RUN}" = "1" ]; then
+      log_info "[DRYRUN] would revoke old-domain cert for ${old_domain}"
+    else
+      certbot_revoke "${old_domain}"
+    fi
   fi
 
   log_info "site-set-domain: ${old_domain} -> ${NEW_DOMAIN} done (name=${SITE_NAME}, docroot=${DOCROOT})"
