@@ -4,6 +4,7 @@
 #
 # write_vhost expects these vars in scope:
 #   DOMAIN, DOCROOT, VHOST_DOCROOT, SITE_USER, PHP_VERSION, TLS_MODE, REPO_ROOT, DRY_RUN
+#   SITE_NAME (optional; defaults to DOMAIN for backward compat -- the stable app slug)
 #   WAF_ENABLED (optional: set to 1 to enable 6G firewall rules for this site)
 
 [ -n "${LITESOUP_VHOST_RENDER_SH:-}" ] && return 0
@@ -31,6 +32,27 @@ existing_site_owner() {
   vhost="$(_find_vhost "${1:?domain required}")" || return 1
   grep -oE '/run/php/[^-]+-php[0-9.]+-fpm\.sock' "${vhost}" | head -1 \
     | sed -E 's|/run/php/([^-]+)-php.*|\1|'
+}
+
+# Resolve an app --name to its current domain. The vhost metadata dir
+# /etc/litesoup/vhost is domain-keyed (<domain>.conf) and stores SITE_NAME, so
+# we scan for the entry whose SITE_NAME matches. Old sites (pre --name) stored
+# SITE_NAME=DOMAIN, so a lookup by --domain works identically to --name=DOMAIN.
+# Echoes the domain; returns 1 if no site has that name.
+resolve_name_to_domain() {
+  local want="${1:?name required}" dir="/etc/litesoup/vhost" f d stored
+  [ -d "${dir}" ] || return 1
+  for f in "${dir}"/*.conf; do
+    [ -e "${f}" ] || continue
+    stored="$(awk -F= -v k=SITE_NAME '$1==k {print $2; exit}' "${f}")"
+    [ -n "${stored}" ] || continue
+    if [ "${stored}" = "${want}" ]; then
+      d="$(awk -F= -v k=DOMAIN '$1==k {print $2; exit}' "${f}")"
+      printf '%s' "${d:-${stored}}"
+      return 0
+    fi
+  done
+  return 1
 }
 
 # Echo the PHP version pinned in the existing vhost.
@@ -160,11 +182,15 @@ open('${vhost}', 'w').write(out)
     || { log_error "site-create: apache configtest failed for ${DOMAIN}"; return 1; }
 
   # Write vhost metadata for backup scripts (backup/lib/common.sh reads this)
+  # and site-set-domain.sh (name → domain + owner + docroot lookup). SITE_NAME
+  # defaults to DOMAIN for sites created before the --name flag existed.
   local vhost_meta_dir="/etc/litesoup/vhost"
   mkdir -p "${vhost_meta_dir}"
   cat > "${vhost_meta_dir}/${DOMAIN}.conf" <<VHOST_META
 SITE_USER=${SITE_USER}
 DOCROOT=${DOCROOT}
+SITE_NAME=${SITE_NAME:-${DOMAIN}}
+DOMAIN=${DOMAIN}
 VHOST_META
   chmod 644 "${vhost_meta_dir}/${DOMAIN}.conf"
 

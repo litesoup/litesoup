@@ -4,6 +4,56 @@ All notable changes to this project will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.8] - 2026-08-03
+
+### Added (feature #70)
+
+- **Decouple site directory name from domain** — `site-create.sh` now takes a
+  required `--name=APP` flag. The docroot directory
+  (`/home/<user>/webapps/<name>/`), DB name, cache keys and log files all derive
+  from the stable app slug instead of the domain, so the domain (a pure network
+  property) can be changed later without touching the filesystem.
+  (`site/site-create.sh`, `site/_vhost_render.sh`)
+- **New `site/site-set-domain.sh`** — Change an existing site's domain
+  (ServerName, TLS cert, and WordPress `siteurl`/`home` in the DB) without
+  moving or renaming anything on disk. Identifies the site by `--name` or
+  `--domain`. (`site/site-set-domain.sh`)
+- **Downstream scripts accept `--name`** — `site-set-php.sh`, `site-set-tls.sh`,
+  `site-set-webhook.sh`, `site-delete.sh` and `site-import.sh` now resolve an
+  app `--name` to the site's current domain via vhost metadata
+  (`/etc/litesoup/vhost/*.conf`), with `--domain` kept as a backward-compatible
+  alias. (`site/_vhost_render.sh`, `site/site-set-php.sh`, `site/site-set-tls.sh`,
+  `site/site-set-webhook.sh`, `site/site-delete.sh`, `site/site-import.sh`)
+- **Vhost metadata now stores `SITE_NAME` + `DOMAIN`** so backup scripts and
+  the new `site-set-domain.sh` can resolve name → domain → owner → docroot.
+  (`site/_vhost_render.sh`)
+
+### Breaking change
+
+- `--name` is now **required** on `site-create.sh`. Existing usage without
+  `--name` fails with a clear error. To preserve your current directory
+  structure, pass `--name=<current-domain>` (same value as `--domain`) — this
+  keeps `/webapps/<domain>/` and lets `site-set-domain` change the domain freely
+  later. Dashboard agent / CLI playbooks must be updated accordingly (follow-up
+  in `litesoup-dashboard` + `litesoup-cli`).
+
+## [0.10.7] - 2026-07-30
+
+### Fixed (issue #1)
+
+- **`backup-site.sh` `timeout bash -c` lost function context** — The subshell
+  created by `timeout bash -c "backup_dump_db ..."` did not inherit functions
+  from `common.sh`, causing `backup_dump_db: command not found`. Fixed by
+  sourcing `common.sh` inside the subshell. (`backup/backup-site.sh`)
+- **Permission denied on `wp db export`** — `mkdir -p` created the backup dir
+  as root, then `wp db export` ran as the site user with no write access.
+  Fixed by `chown`-ing the dest dir to the site user before export.
+  (`backup/lib/common.sh`)
+- **Missing `/etc/litesoup/vhost/` directory** — Backup scripts read vhost
+  metadata from a directory never created during site provisioning. Fixed by
+  writing the metadata file in `write_vhost()` after Apache configtest passes.
+  (`site/_vhost_render.sh`)
+
 ## [0.10.6] - 2026-07-22
 
 ### Fixed (issue #69)

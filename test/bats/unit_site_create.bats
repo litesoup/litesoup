@@ -23,19 +23,19 @@ STUBS
 
 @test "site-create rejects unsupported --php" {
   run -64 env LITESOUP_ALLOW_TEST_STUBS=1 LITESOUP_TEST_STUBS="${STUBS_FILE}" \
-    bash "${REPO_ROOT}/site/site-create.sh" --domain=example.test --php=7.4 --dry-run
+    bash "${REPO_ROOT}/site/site-create.sh" --name=example --domain=example.test --php=7.4 --dry-run
   assert_output --partial "unsupported PHP version: 7.4"
 }
 
 @test "site-create defaults to PHP_VERSION_DEFAULT when --php omitted" {
   run -0 env LITESOUP_ALLOW_TEST_STUBS=1 LITESOUP_TEST_STUBS="${STUBS_FILE}" DRY_RUN=1 \
-    bash "${REPO_ROOT}/site/site-create.sh" --domain=example.test
+    bash "${REPO_ROOT}/site/site-create.sh" --name=example --domain=example.test
   assert_output --partial "POOL: litesoup 8.2"
 }
 
 @test "site-create routes vhost socket to chosen --php" {
   run -0 env LITESOUP_ALLOW_TEST_STUBS=1 LITESOUP_TEST_STUBS="${STUBS_FILE}" DRY_RUN=1 \
-    bash "${REPO_ROOT}/site/site-create.sh" --domain=example.test --php=8.4
+    bash "${REPO_ROOT}/site/site-create.sh" --name=example --domain=example.test --php=8.4
   assert_output --partial "POOL: litesoup 8.4"
   assert_output --partial "php8.4-fpm.sock"
 }
@@ -54,7 +54,7 @@ certbot_obtain() { echo "OBTAIN: $*"; }
 certbot_self_signed() { echo "SELFSIGNED: $*"; }
 STUBS
   run -0 env LITESOUP_ALLOW_TEST_STUBS=1 LITESOUP_TEST_STUBS="${STUBS_FILE}" DRY_RUN=1 \
-    bash "${REPO_ROOT}/site/site-create.sh" --domain=example.test
+    bash "${REPO_ROOT}/site/site-create.sh" --name=example --domain=example.test
   assert_output --partial "VHOST: tls=none"
   refute_output --partial "OBTAIN:"
   refute_output --partial "SELFSIGNED:"
@@ -66,7 +66,7 @@ STUBS
 require_root() { :; }
 STUBS
   run -64 env LITESOUP_ALLOW_TEST_STUBS=1 LITESOUP_TEST_STUBS="${STUBS_FILE}" DRY_RUN=1 \
-    bash "${REPO_ROOT}/site/site-create.sh" --domain=example.test --tls=letsencrypt
+    bash "${REPO_ROOT}/site/site-create.sh" --name=example --domain=example.test --tls=letsencrypt
   assert_output --partial "--tls=letsencrypt requires --email"
 }
 
@@ -84,7 +84,7 @@ certbot_obtain() { echo "OBTAIN: $*"; }
 certbot_self_signed() { echo "SELFSIGNED: $*"; }
 STUBS
   run -0 env LITESOUP_ALLOW_TEST_STUBS=1 LITESOUP_TEST_STUBS="${STUBS_FILE}" DRY_RUN=1 \
-    bash "${REPO_ROOT}/site/site-create.sh" --domain=example.test --tls=letsencrypt --email=ops@example.test
+    bash "${REPO_ROOT}/site/site-create.sh" --name=example --domain=example.test --tls=letsencrypt --email=ops@example.test
   assert_output --partial "OBTAIN: example.test ops@example.test"
   assert_output --partial "VHOST: tls=letsencrypt"
 }
@@ -103,7 +103,7 @@ certbot_obtain() { echo "OBTAIN: $*"; }
 certbot_self_signed() { echo "SELFSIGNED: $*"; }
 STUBS
   run -0 env LITESOUP_ALLOW_TEST_STUBS=1 LITESOUP_TEST_STUBS="${STUBS_FILE}" DRY_RUN=1 \
-    bash "${REPO_ROOT}/site/site-create.sh" --domain=example.test --tls=self-signed
+    bash "${REPO_ROOT}/site/site-create.sh" --name=example --domain=example.test --tls=self-signed
   assert_output --partial "SELFSIGNED: example.test"
   assert_output --partial "VHOST: tls=self-signed"
   refute_output --partial "OBTAIN:"
@@ -115,7 +115,7 @@ STUBS
 require_root() { :; }
 STUBS
   run -64 env LITESOUP_ALLOW_TEST_STUBS=1 LITESOUP_TEST_STUBS="${STUBS_FILE}" DRY_RUN=1 \
-    bash "${REPO_ROOT}/site/site-create.sh" --domain=example.test --tls=garbage
+    bash "${REPO_ROOT}/site/site-create.sh" --name=example --domain=example.test --tls=garbage
   assert_output --partial "--tls must be one of: letsencrypt, self-signed, none"
 }
 
@@ -139,7 +139,7 @@ certbot_obtain() { :; }
 certbot_self_signed() { :; }
 STUBS
   run -0 env LITESOUP_ALLOW_TEST_STUBS=1 LITESOUP_TEST_STUBS="${STUBS_FILE}" DRY_RUN=1 \
-    bash "${REPO_ROOT}/site/site-create.sh" --domain=example.test
+    bash "${REPO_ROOT}/site/site-create.sh" --name=example --domain=example.test
   assert_output --partial "POOL: litesoup 8.2 medium"
 }
 
@@ -157,7 +157,7 @@ certbot_obtain() { :; }
 certbot_self_signed() { :; }
 STUBS
   run -0 env LITESOUP_ALLOW_TEST_STUBS=1 LITESOUP_TEST_STUBS="${STUBS_FILE}" DRY_RUN=1 \
-    bash "${REPO_ROOT}/site/site-create.sh" --domain=example.test --tier=medium
+    bash "${REPO_ROOT}/site/site-create.sh" --name=example --domain=example.test --tier=medium
   assert_output --partial "POOL: litesoup 8.2 medium"
 }
 
@@ -167,7 +167,7 @@ STUBS
 require_root() { :; }
 STUBS
   run -64 env LITESOUP_ALLOW_TEST_STUBS=1 LITESOUP_TEST_STUBS="${STUBS_FILE}" DRY_RUN=1 \
-    bash "${REPO_ROOT}/site/site-create.sh" --domain=example.test --tier=garbage
+    bash "${REPO_ROOT}/site/site-create.sh" --name=example --domain=example.test --tier=garbage
   assert_output --partial "--tier must be one of: small, medium, large"
 }
 
@@ -190,6 +190,7 @@ STUBS
   # site-create.sh runs `main "$@"` at the bottom -- we don't want that here,
   # so we source via a subshell trick: feed an exit before main.
   DOMAIN="example.test"
+  SITE_NAME="myapp"
   SITE_USER="litesoup"
   DRY_RUN=0
   unset DB_NAME DB_USER DB_PASS
@@ -220,6 +221,7 @@ STUBS
   mariadb_root() { cat > "${BATS_TEST_TMPDIR}/sql.captured"; }
 
   DOMAIN="example.test"
+  SITE_NAME="myapp"
   SITE_USER="litesoup"
   DRY_RUN=0
   unset DB_NAME DB_USER DB_PASS
@@ -263,6 +265,7 @@ PHP
   mariadb_root() { cat > "${BATS_TEST_TMPDIR}/sql.captured"; }
 
   DOMAIN="example.test"
+  SITE_NAME="myapp"
   SITE_USER="litesoup"
   DRY_RUN=0
   unset DB_NAME DB_USER DB_PASS

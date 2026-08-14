@@ -8,12 +8,15 @@ nav_order: 3
 
 ## Overview
 
-Every site lives at `/home/<user>/webapps/<domain>/` and is owned by its
-system user (`<user>:<user>`, never `www-data`). PHP runs in a per-user
-PHP-FPM pool as that same user, so one site's PHP process can't read
-another site's files. The `site-*` scripts in `site/` are the
-operator-facing wrappers around create, delete, switch PHP version,
-resize the FPM pool, and add or change TLS.
+Every site lives at `/home/<user>/webapps/<name>/` and is owned by its
+system user (`<user>:<user>`, never `www-data`). **`<name>` is the stable
+application slug** passed via `--name` at create time — it never changes.
+The domain (a separate network property, `ServerName`) can be updated
+independently with `site-set-domain.sh` without moving anything on disk.
+PHP runs in a per-user PHP-FPM pool as that same user, so one site's PHP
+process can't read another site's files. The `site-*` scripts in `site/`
+are the operator-facing wrappers around create, delete, switch PHP
+version, resize the FPM pool, add or change TLS, and change the domain.
 
 All scripts must be run with `sudo`. All accept `--dry-run` to preview
 the actions without touching the system.
@@ -21,18 +24,23 @@ the actions without touching the system.
 ## Create a site
 
 The workhorse. Provisions docroot, MariaDB database + user, PHP-FPM pool,
-Apache vhost, and downloads WordPress core.
+Apache vhost, and downloads WordPress core. `--name` is **required** and
+is the stable app slug that names the docroot dir, DB, cache keys and log
+files.
 
 Simple HTTP site (default user `litesoup`, default PHP, no TLS):
 
 ```bash
-sudo bash site/site-create.sh --domain=example.test
+sudo bash site/site-create.sh --name=myapp --domain=example.test
 ```
+
+This creates `/home/litesoup/webapps/myapp/` with `ServerName example.test`.
 
 HTTPS via Let's Encrypt (domain must already point at this server):
 
 ```bash
 sudo bash site/site-create.sh \
+  --name=myapp \
   --domain=example.com \
   --tls=letsencrypt \
   --email=admin@example.com
@@ -42,6 +50,7 @@ Self-signed cert for local development:
 
 ```bash
 sudo bash site/site-create.sh \
+  --name=myapp \
   --domain=dev.local \
   --tls=self-signed
 ```
@@ -50,6 +59,7 @@ Pick a specific PHP version:
 
 ```bash
 sudo bash site/site-create.sh \
+  --name=myapp \
   --domain=legacy.example.com \
   --php=8.1
 ```
@@ -58,6 +68,7 @@ Custom user for per-client isolation (the user is created if missing):
 
 ```bash
 sudo bash site/site-create.sh \
+  --name=clientco \
   --domain=clientco.com \
   --user=clientco \
   --tls=letsencrypt \
@@ -75,13 +86,13 @@ a database dump file.
 
 ```bash
 # Import from a git repo (WordPress files)
-sudo bash site/site-import.sh --domain=example.com --git-repo=git@github.com:org/repo.git
+sudo bash site/site-import.sh --name=example --domain=example.com --git-repo=git@github.com:org/repo.git
 
 # Import from a git repo + SQL dump
-sudo bash site/site-import.sh --domain=example.com --git-repo=git@github.com:org/repo.git --db-dump=./example.sql
+sudo bash site/site-import.sh --name=example --domain=example.com --git-repo=git@github.com:org/repo.git --db-dump=./example.sql
 
 # Import a flat docroot (no git) from a local archive
-sudo bash site/site-import.sh --domain=example.com --archive=/path/to/site.tar.gz
+sudo bash site/site-import.sh --name=example --domain=example.com --archive=/path/to/site.tar.gz
 ```
 
 The script creates the system user, MariaDB database + user, PHP-FPM pool,
@@ -160,6 +171,27 @@ Drop TLS back to HTTP-only:
 sudo bash site/site-set-tls.sh --domain=example.com --tls=none
 ```
 
+## Change a site's domain
+
+Because the on-disk identity (`--name`) is decoupled from the domain, you
+can move a site to a new domain without moving or renaming anything on
+disk. `site-set-domain.sh` updates only the Apache `ServerName`, the TLS
+cert (re-issued for the new domain), and the WordPress `siteurl`/`home`
+in the database — it never touches the docroot, git remotes, backup
+paths, or log paths.
+
+```bash
+sudo bash site/site-set-domain.sh \
+  --name=myapp \
+  --new-domain=example.com \
+  --tls=letsencrypt \
+  --email=admin@example.com
+```
+
+Identify the site by its app `--name`, or fall back to `--domain=OLD` for
+sites created before the `--name` flag existed. Omit `--tls` to preserve
+the site's current TLS mode for the new domain.
+
 ## Set up Git webhook auto-deploy
 
 Use `site-set-webhook.sh` to configure automatic deployments from a Git
@@ -167,7 +199,7 @@ repository. Every time you push to the configured branch, the server pulls
 the latest code automatically.
 
 ```bash
-sudo bash site/site-set-webhook.sh --domain=example.com
+sudo bash site/site-set-webhook.sh --name=myapp
 ```
 
 The script configures a webhook endpoint and creates a systemd service that

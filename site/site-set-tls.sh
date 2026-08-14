@@ -34,6 +34,7 @@ if [ "${LITESOUP_ALLOW_TEST_STUBS:-0}" = "1" ] \
 fi
 
 DOMAIN=""
+SITE_NAME_ARG=""
 TLS_MODE=""
 TLS_EMAIL=""
 
@@ -41,7 +42,9 @@ usage() {
   cat <<'EOF'
 litesoup site-set-tls -- retroactively set TLS on an existing site
 
-Usage: sudo bash site-set-tls.sh --domain=DOMAIN --tls=MODE [--email=ADDR] [--dry-run]
+Usage: sudo bash site-set-tls.sh (--name=APP | --domain=D) --tls=MODE [--email=ADDR] [--dry-run]
+  --name=APP    application slug of the site (preferred; resolved to its domain)
+  --domain=D    domain of the existing site (backward-compat alias)
   --tls=MODE     letsencrypt | self-signed | none
   --email=ADDR   required when --tls=letsencrypt
 EOF
@@ -51,6 +54,7 @@ parse_args() {
   local arg
   for arg in "$@"; do
     case "${arg}" in
+      --name=*)    SITE_NAME_ARG="${arg#*=}" ;;
       --domain=*) DOMAIN="${arg#*=}" ;;
       --tls=*)    TLS_MODE="${arg#*=}" ;;
       --email=*)  TLS_EMAIL="${arg#*=}" ;;
@@ -60,7 +64,13 @@ parse_args() {
     esac
   done
   export DRY_RUN
-  [ -n "${DOMAIN}" ]   || { log_error "--domain is required"; usage; exit 64; }
+  if [ -n "${SITE_NAME_ARG}" ] && [ -z "${DOMAIN}" ]; then
+    DOMAIN="$(resolve_name_to_domain "${SITE_NAME_ARG}" 2>/dev/null || true)"
+    if [ -z "${DOMAIN}" ]; then
+      log_error "--name=${SITE_NAME_ARG}: no site with that app name found"; usage; exit 64
+    fi
+  fi
+  [ -n "${DOMAIN}" ]   || { log_error "--domain is required (or --name)"; usage; exit 64; }
   [ -n "${TLS_MODE}" ] || { log_error "--tls is required";    usage; exit 64; }
   case "${TLS_MODE}" in
     letsencrypt|self-signed|none) ;;
