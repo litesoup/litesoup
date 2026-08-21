@@ -44,6 +44,11 @@ Opt-in extras (only added when the matching flag is passed):
   PermitRootLogin no          # requires --no-root-login
 
 Behavior:
+  0. Disable Ubuntu 24.04 socket-activated SSH (ssh.socket) and switch to
+     standalone sshd, which binds the CONFIG port. Runs on every invocation
+     (idempotent) so a package upgrade that re-enables the socket is caught
+     on re-run. This MUST happen before harden-firewall.sh so the port the
+     firewall opens is the one sshd actually listens on.
   1. Render desired sshd hardening directives based on flags.
   2. Write them to /etc/ssh/sshd_config.d/52-litesoup-harden.conf
      (mode 0644 root:root) only when content differs. The 52- prefix
@@ -119,6 +124,53 @@ main() {
   if [ "${DRY_RUN}" != "1" ] && [ ! -d "${override_dir}" ]; then
     log_error "harden-ssh: ${override_dir} missing — is openssh-server installed?"
     exit 1
+  fi
+
+  # Determine the effective SSH port ONCE, up front. Used by the socket-
+  # activation check below and the post-reload health check. The port we are
+  # actually connected on is the strongest signal; otherwise fall back to the
+  # effective configured port (`sshd -T` resolves the full include chain).
+  local ssh_port=22
+  if [ -n "${SSH_CONNECTION:-}" ]; then
+    ssh_port="$(echo "${SSH_CONNECTION}" | awk '{print $4}')"
+  else
+    ssh_port="$(sshd -T 2>/dev/null | sed -n 's/^port //p' | tail -1)"
+    ssh_port="${ssh_port:-22}"
+  fi
+
+  # 0. SOCKET ACTIVATION CHECK (issue #58, #75). Ubuntu 24.04 ships
+  #    socket-activated SSH by default: `ssh.socket` binds the DEFAULT port and
+  #    spawns sshd on demand — regardless of the `Port` directive in the sshd
+  #    config chain. If a non-standard port is configured via a drop-in, the
+  #    socket still owns the default port while nothing listens on the config
+  #    port. A default-deny firewall (harden-firewall.sh) then opens the config
+  #    port and blocks the socket port → operator is locked out.
+  #
+  #    Fix: switch to traditional standalone sshd (ssh.service), which reads the
+  #    config chain and binds the CONFIG port. This MUST run before any reload /
+  #    health-check and before harden-firewall.sh, so the port the firewall opens
+  #    is the one sshd actually listens on.
+  #
+  #    This runs on EVERY invocation (not just when the override changed), so a
+  #    package upgrade that re-enables the socket is caught on re-run. It is
+  #    idempotent: once the socket is disabled it stays disabled.
+  if [ "${DRY_RUN}" != "1" ]; then
+    if systemctl is-active ssh.socket >/dev/null 2>&1; then
+      log_warn "harden-ssh: ssh.socket is active (Ubuntu 24.04 socket-activated SSH)"
+      log_warn "harden-ssh:    it binds the default port regardless of the Port directive."
+      log_info "harden-ssh: switching to traditional standalone sshd (port ${ssh_port})..."
+      systemctl disable --now ssh.socket 2>/dev/null || true
+      systemctl enable --now ssh.service 2>/dev/null || true
+      # Give sshd a moment to bind the config port.
+      if ! ss -tlnp 2>/dev/null | grep -qE ":${ssh_port}\\b.*sshd"; then
+        sleep 2
+      fi
+      if ss -tlnp 2>/dev/null | grep -qE ":${ssh_port}\\b.*sshd"; then
+        log_info "harden-ssh: sshd now owns port ${ssh_port} directly"
+      else
+        log_warn "harden-ssh: could not verify sshd owns port ${ssh_port} directly"
+      fi
+    fi
   fi
 
   # 1. Render desired override content. Heredoc gives us REAL newlines; using
@@ -222,15 +274,6 @@ EOF
     #     log a warning and proceed — the override IS written and will take
     #     effect on next sshd restart. Only revert if sshd died completely.
     if [ "${DRY_RUN}" != "1" ]; then
-      local ssh_port=22
-      if [ -n "${SSH_CONNECTION:-}" ]; then
-        # Port we are actually connected on — best signal.
-        ssh_port="$(echo "${SSH_CONNECTION}" | awk '{print $4}')"
-      else
-        # Fallback: read the effective configured port.
-        ssh_port="$(sshd -T 2>/dev/null | sed -n 's/^port //p' | tail -1)"
-        ssh_port="${ssh_port:-22}"
-      fi
       local poll_ok=0
       local i
       for i in 1 2 3 4 5 6; do
@@ -266,33 +309,6 @@ EOF
       fi
       # Reload succeeded (or process alive but slow) — discard backup.
       [ -n "${backup:-}" ] && rm -f "${backup}"
-
-      # 5c. SOCKET ACTIVATION CHECK (issue #58). Ubuntu 24.04 ships
-      #     socket-activated SSH by default. When systemctl daemon-reload
-      #     runs (e.g. from litesoup backup configure), systemd can silently
-      #     deactivate the socket unit. Fix: switch to standalone sshd.
-      if systemctl is-active ssh.socket >/dev/null 2>&1; then
-        log_warn "harden-ssh: ssh.socket is active (Ubuntu 24.04 socket-activated SSH)"
-        log_warn "harden-ssh:    a later daemon-reload can silently kill port 22."
-        log_info "harden-ssh: switching to traditional standalone sshd..."
-        if [ "${DRY_RUN}" = "1" ]; then
-          log_info "[DRYRUN] would run: systemctl disable --now ssh.socket"
-          log_info "[DRYRUN] would run: systemctl enable --now ssh.service"
-        else
-          systemctl disable --now ssh.socket 2>/dev/null || true
-          systemctl enable --now ssh.service 2>/dev/null || true
-          if ss -tlnp 2>/dev/null | grep -qE ":${ssh_port}\b.*sshd"; then
-            log_info "harden-ssh: sshd now owns port ${ssh_port} directly"
-          else
-            sleep 2
-            if ss -tlnp 2>/dev/null | grep -qE ":${ssh_port}\b.*sshd"; then
-              log_info "harden-ssh: sshd now owns port ${ssh_port} directly"
-            else
-              log_warn "harden-ssh: could not verify sshd owns port directly"
-            fi
-          fi
-        fi
-      fi
     fi
   else
     log_info "harden-ssh: no override changes — skipping reload"
