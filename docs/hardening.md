@@ -6,26 +6,37 @@ nav_order: 4
 
 # Server hardening
 
-`install-stack.sh` runs six hardening scripts at the end (stages 9-14)
+`install-stack.sh` runs seven hardening scripts at the end (stages 11-17)
 once the LAMP stack is up. Each script is idempotent — re-runs detect
 "already configured" and skip the work. Each script also runs standalone,
 so you can re-apply or update one piece without touching the rest. Pass
-`--skip-hardening` to install-stack to skip all six.
+`--skip-hardening` to install-stack to skip all seven.
 
 ## What runs by default
 
-- **stage 9 — harden-firewall.sh** — installs ufw, denies inbound by
+- **stage 11 — harden-ssh.sh** — disables Ubuntu 24.04 socket-activated
+  SSH (`ssh.socket`) and switches to standalone sshd on the configured
+  port, then writes safe sshd defaults. **Must run before the firewall**
+  so the port UFW opens is the one sshd actually listens on (see the
+  socket-activation note below).
+- **stage 12 — harden-firewall.sh** — installs ufw, denies inbound by
   default, opens SSH (auto-detected port) + 80/tcp + 443/tcp.
-- **stage 10 — harden-fail2ban.sh** — installs fail2ban, ships managed
+- **stage 13 — harden-fail2ban.sh** — installs fail2ban, ships managed
   jails for sshd and apache-auth.
-- **stage 11 — harden-unattended-upgrades.sh** — turns on
+- **stage 14 — harden-unattended-upgrades.sh** — turns on
   security-only auto-updates, no auto-reboot.
-- **stage 12 — harden-ssh.sh** — writes safe sshd defaults
-  (MaxAuthTries 3, idle timeout, X11/agent forwarding off).
-- **stage 13 — harden-apache.sh** — hides version banner, adds three
+- **stage 15 — harden-apache.sh** — hides version banner, adds three
   security headers, restricts `/server-status` to localhost.
-- **stage 14 — harden-php.sh** — global php.ini hardening (cli + fpm)
+- **stage 16 — harden-php.sh** — global php.ini hardening (cli + fpm)
   for every installed PHP version.
+- **stage 17 — harden-user.sh** — provisions the `litesoup` SSH user +
+  sudo (only when `--ssh-key` is passed to install-stack).
+
+After hardening, install-stack runs a **post-install SSH access check**
+(`verify_ssh_access`): it confirms sshd is listening on the configured
+port, UFW allows it, and `ssh.socket` is disabled. If any check fails,
+install-stack aborts rather than declaring success while the operator is
+about to be locked out.
 
 ## Detailed: each script
 
@@ -111,6 +122,19 @@ prior version) so sshd is never left broken. On success, ssh is
 This script never touches `/etc/ssh/sshd_config`. That file is
 package-managed; apt rewrites it on upgrades. The drop-in directory is
 the supported extension point.
+
+**Socket activation (Ubuntu 24.04).** Ubuntu 24.04 ships
+socket-activated SSH by default: `ssh.socket` binds the **default** port
+and spawns sshd on demand — regardless of the `Port` directive in the
+config chain. If you set a non-standard port via a drop-in, the socket
+still owns the default port while nothing listens on your configured
+port. A default-deny firewall that opens only the configured port then
+blocks the socket port → lockout. To prevent this, harden-ssh disables
+`ssh.socket` and enables standalone `ssh.service`, which reads the config
+chain and binds the configured port. This runs on **every** invocation
+(idempotent), so a package upgrade that re-enables the socket is caught
+on re-run. Because of this, install-stack runs harden-ssh **before**
+harden-firewall.
 
 ### harden-apache.sh
 

@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed (issue #75)
+
+- **install-stack hardening could lock out SSH on Ubuntu 24.04 with a
+  non-standard port** — `install-stack.sh` now runs `harden-ssh.sh` as the
+  first hardening stage, **before** `harden-firewall.sh`. Ubuntu 24.04
+  ships socket-activated SSH (`ssh.socket`), which binds the **default**
+  port regardless of the `Port` directive. Previously the firewall opened
+  the configured port (where nothing listened) while blocking the socket
+  port (where sshd actually listened) → operator locked out, console
+  recovery required.
+- **`harden-ssh.sh` now disables `ssh.socket` on every run** (not just
+  when the override file changes), switching to standalone `ssh.service`
+  which binds the configured port. This is idempotent and catches a
+  package upgrade that re-enables the socket on re-run.
+- **Post-install SSH access verification** — after hardening,
+  `install-stack.sh` runs `verify_ssh_access`, confirming sshd is listening
+  on the configured port, UFW allows it, and `ssh.socket` is disabled. It
+  aborts (rather than declaring success) if the operator is about to be
+  locked out. (`install/install-stack.sh`, `harden/harden-ssh.sh`,
+  `test/bats/unit_harden.bats`)
+
 ## [0.10.8] - 2026-08-03
 
 ### Added (feature #70)

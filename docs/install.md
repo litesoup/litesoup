@@ -98,7 +98,7 @@ This goes straight to the CloudPanel mirror. Same packages (byte-equivalent, sig
 
 ## Stage table
 
-The installer runs in stages. You'll see `stage N/14:` in the log as it goes.
+The installer runs in stages. You'll see `stage N/15:` in the log as it goes.
 
 | Stage | What it does                                       |
 |-------|----------------------------------------------------|
@@ -110,14 +110,24 @@ The installer runs in stages. You'll see `stage N/14:` in the log as it goes.
 | 6     | certbot (Let's Encrypt + auto-renewal)             |
 | 7     | redis (localhost, requirepass, RAM-tiered)         |
 | 8     | memcached (localhost, UDP off)                     |
-| 9     | ufw firewall                                       |
-| 10    | fail2ban                                           |
-| 11    | unattended-upgrades                                |
-| 12    | sshd hardening                                     |
+| 9     | sshd hardening (disable ssh.socket, standalone sshd on configured port) |
+| 10    | ufw firewall                                       |
+| 11    | fail2ban                                           |
+| 12    | unattended-upgrades                                |
 | 13    | Apache hardening                                   |
 | 14    | php.ini hardening (per version)                    |
+| 15    | litesoup SSH user + sudo (only with `--ssh-key`)   |
 
-With `--skip-hardening`, stages 9 through 14 are skipped and the installer reports 8 stages total instead of 14.
+After the hardening stages, install-stack runs a **post-install SSH access
+check** (`verify_ssh_access`) that confirms sshd is listening on the
+configured port, UFW allows it, and `ssh.socket` is disabled — aborting
+rather than declaring success if the operator is about to be locked out.
+This is why sshd hardening (stage 9) runs **before** the firewall (stage
+10): on Ubuntu 24.04, socket-activated SSH binds the default port
+regardless of the `Port` directive, so the firewall must open the port
+standalone sshd actually listens on.
+
+With `--skip-hardening`, stages 9 through 15 are skipped and the installer reports 8 stages total instead of 15.
 
 ## After install
 

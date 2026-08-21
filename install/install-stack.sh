@@ -43,8 +43,9 @@ Options:
   --redis-maxmemory=SIZE      Override Redis maxmemory (e.g. 256mb, 1gb).
                               Default: auto from system RAM tier
                               (<2G→128mb, 2–8G→512mb, ≥8G→2gb).
-  --skip-hardening            Skip stages 9-11 (firewall, fail2ban,
-                              unattended-upgrades). Use for dev VMs or
+  --skip-hardening            Skip all hardening stages (harden-ssh,
+                              harden-firewall, fail2ban, unattended-upgrades,
+                              harden-apache, harden-php). Use for dev VMs or
                               when host-managed elsewhere.
   --dry-run                   Print actions without executing
   --help                      Show this help
@@ -59,6 +60,61 @@ Installs: Apache (mpm_event + http2), one PHP-FPM pool per requested version
           /home/litesoup/webapps/ with a per-user pool at
           PHP_VERSION_DEFAULT (8.2).
 EOF
+}
+
+# verify_ssh_access — post-hardening safety net (issue #75).
+# Confirms the operator will NOT be locked out before install-stack declares
+# success: sshd is listening on the configured port, UFW allows it, and
+# socket-activated SSH is disabled. Called at the end of the hardening stages.
+#
+# The port that matters for ongoing access is the CONFIG port (`sshd -T`),
+# because after harden-ssh disables the socket, standalone sshd binds the
+# configured port and harden-firewall opens that same port. The operator's
+# ORIGINAL connection port may differ from the config port (that is the whole
+# socket-activation bug), so we must NOT trust SSH_CONNECTION here.
+verify_ssh_access() {
+  if [ "${DRY_RUN}" = "1" ]; then
+    log_info "[dry-run] would verify SSH reachability on the configured port"
+    return 0
+  fi
+
+  local ssh_port
+  ssh_port="$(sshd -T 2>/dev/null | sed -n 's/^port //p' | tail -1)"
+  ssh_port="${ssh_port:-22}"
+
+  local problems=0
+
+  # 1. sshd must be listening on the configured port.
+  if ! ss -tlnp 2>/dev/null | grep -qE ":${ssh_port}\\b.*sshd"; then
+    log_error "verify-ssh: sshd is NOT listening on configured port ${ssh_port}"
+    problems=1
+  else
+    log_info "verify-ssh: sshd listening on configured port ${ssh_port}"
+  fi
+
+  # 2. Socket-activated SSH must be disabled (else it owns a different port).
+  if systemctl is-active ssh.socket >/dev/null 2>&1; then
+    log_error "verify-ssh: ssh.socket is STILL active — it binds the default port regardless of the Port directive"
+    problems=1
+  fi
+
+  # 3. UFW (if active) must allow the configured port.
+  if command -v ufw >/dev/null 2>&1 \
+      && ufw status 2>/dev/null | grep -q '^Status:[[:space:]]active'; then
+    if ! ufw status 2>/dev/null | grep -qE "(^|[[:space:]])${ssh_port}/tcp([[:space:]]|$)"; then
+      log_error "verify-ssh: UFW is active but does NOT allow ${ssh_port}/tcp"
+      problems=1
+    else
+      log_info "verify-ssh: UFW allows ${ssh_port}/tcp"
+    fi
+  fi
+
+  if [ "${problems}" = "1" ]; then
+    log_error "verify-ssh: SSH access check FAILED — refusing to declare install complete."
+    log_error "verify-ssh: Do NOT disconnect from this session. Investigate before rebooting."
+    exit 1
+  fi
+  log_info "verify-ssh: SSH access confirmed on configured port ${ssh_port}"
 }
 
 main() {
@@ -125,10 +181,12 @@ main() {
   require_root
   require_ubuntu_2404
 
-  # Stage count: without --skip-hardening, hardening/stages 11-16 run (harden-ssh.sh
-  # is NOT included — it's a post-install step, run `bash harden/harden-ssh.sh`
-  # manually when ready). With --skip-hardening, stages 9-11 run.
-  local total_stages=17
+  # Stage count: without --skip-hardening, hardening stages 11-17 run, including
+  # harden-ssh.sh (which disables Ubuntu 24.04 socket-activated SSH and switches
+  # to standalone sshd on the configured port) BEFORE harden-firewall.sh, so the
+  # firewall opens the port sshd actually listens on (issue #75). With
+  # --skip-hardening, stages 9-11 run.
+  local total_stages=18
   [ "${skip_hardening}" = "1" ] && total_stages=11
 
   log_info "stage 1/${total_stages}: apache"
@@ -206,31 +264,40 @@ main() {
     # ordering consistent with traditional sysadmin practice.
     local harden_dir="${SCRIPT_DIR}/../harden"
 
-    log_info "stage 11/${total_stages}: harden-firewall (ufw)"
+    # harden-ssh MUST run before harden-firewall (issue #75). On Ubuntu 24.04
+    # SSH is socket-activated by default: ssh.socket binds the DEFAULT port
+    # regardless of the Port directive, so opening the configured port in UFW
+    # while the socket still owns a different port locks the operator out.
+    # harden-ssh.sh disables the socket and switches to standalone sshd on the
+    # configured port; only then does harden-firewall open that same port.
+    log_info "stage 11/${total_stages}: harden-ssh (disable ssh.socket, standalone sshd on configured port)"
+    run_or_dryrun bash "${harden_dir}/harden-ssh.sh"
+
+    log_info "stage 12/${total_stages}: harden-firewall (ufw)"
     run_or_dryrun bash "${harden_dir}/harden-firewall.sh"
 
-  log_info "stage 12/${total_stages}: harden-fail2ban"
-  run_or_dryrun bash "${harden_dir}/harden-fail2ban.sh"
+    log_info "stage 13/${total_stages}: harden-fail2ban"
+    run_or_dryrun bash "${harden_dir}/harden-fail2ban.sh"
 
-  log_info "stage 13/${total_stages}: harden-unattended-upgrades"
-  run_or_dryrun bash "${harden_dir}/harden-unattended-upgrades.sh"
+    log_info "stage 14/${total_stages}: harden-unattended-upgrades"
+    run_or_dryrun bash "${harden_dir}/harden-unattended-upgrades.sh"
 
-  # NOTE: harden-ssh.sh is NOT called during install-stack. It's available as
-  # a post-install step: run `bash /usr/lib/litesoup/harden/harden-ssh.sh`
-  # when ready. This avoids any risk of SSH lockout during initial provisioning.
-  # See harden/harden-ssh.sh for options (--no-root-login, --no-password-auth).
+    log_info "stage 15/${total_stages}: harden-apache (ServerTokens, headers, mod_status local-only)"
+    run_or_dryrun bash "${harden_dir}/harden-apache.sh"
 
-  log_info "stage 14/${total_stages}: harden-apache (ServerTokens, headers, mod_status local-only)"
-  run_or_dryrun bash "${harden_dir}/harden-apache.sh"
+    log_info "stage 16/${total_stages}: harden-php (php.ini hardening per version)"
+    run_or_dryrun bash "${harden_dir}/harden-php.sh"
 
-  log_info "stage 15/${total_stages}: harden-php (php.ini hardening per version)"
-  run_or_dryrun bash "${harden_dir}/harden-php.sh"
+    log_info "stage 17/${total_stages}: harden-user (litesoup SSH user + sudo)"
+    # Only runs if --ssh-key was passed; otherwise it's a no-op.
+    if [ -n "${SSH_KEY:-}" ]; then
+      run_or_dryrun bash "${harden_dir}/harden-user.sh" --ssh-key="${SSH_KEY}"
+    fi
 
-  log_info "stage 16/${total_stages}: harden-user (litesoup SSH user + sudo)"
-  # Only runs if --ssh-key was passed; otherwise it's a no-op.
-  if [ -n "${SSH_KEY:-}" ]; then
-    run_or_dryrun bash "${harden_dir}/harden-user.sh" --ssh-key="${SSH_KEY}"
-  fi
+    # Post-hardening SSH access verification (issue #75). Confirms sshd is
+    # actually listening on the configured port and UFW allows it, so we never
+    # declare the install complete while the operator is about to be locked out.
+    verify_ssh_access
 
   fi  # end of skip_hardening else block
 

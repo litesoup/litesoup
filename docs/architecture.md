@@ -89,12 +89,18 @@ The mental model: every script is a convergence step toward a desired state, nev
 | 6 | Certbot + LE auto-renewal timer | Pulled from Ubuntu archive, no PPA needed. |
 | 7 | Redis | RAM-tier-sized maxmemory: `<2G→128mb`, `2–8G→512mb`, `≥8G→2gb`. Override with `--redis-maxmemory=SIZE`. |
 | 8 | Memcached | UDP off (`-U 0`), loopback only (`-l 127.0.0.1`). |
-| 9 | harden-firewall (ufw) | Opens 22/80/443; deny everything else. |
-| 10 | harden-fail2ban | Watches Apache + sshd logs. Has to run after stage 1 so the log files exist. |
-| 11 | harden-unattended-upgrades | Security updates only. |
-| 12 | harden-ssh | **Reads the warning in the script header before running on a fresh host** — see SSH note below. |
+| 9 | harden-ssh | Disables Ubuntu 24.04 socket-activated SSH, switches to standalone sshd on the configured port, writes safe sshd defaults. Runs before the firewall (issue #75). |
+| 10 | harden-firewall (ufw) | Opens the sshd port + 80/443; deny everything else. |
+| 11 | harden-fail2ban | Watches Apache + sshd logs. Has to run after stage 1 so the log files exist. |
+| 12 | harden-unattended-upgrades | Security updates only. |
 | 13 | harden-apache | `ServerTokens Prod`, security headers, mod_status restricted to local. |
 | 14 | harden-php | Global php.ini hardening per installed version. |
+| 15 | harden-user | Provisions `litesoup` SSH user + sudo (only when `--ssh-key` passed). |
+
+After hardening, install-stack runs `verify_ssh_access`: it confirms sshd
+is listening on the configured port, UFW allows it, and `ssh.socket` is
+disabled — aborting rather than declaring success if the operator is about
+to be locked out (issue #75).
 
 The "services first, lock down second" ordering is deliberate: every hardening stage depends on the thing it's hardening already being installed and configured. Reorder this and stage 10 fails because there are no Apache logs yet.
 
