@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# harden/ssh-guard.sh — boot-time SSH guard (issue #75 follow-up).
+#
+# Runs as a systemd oneshot (litesoup-ssh-guard.service) at every boot.
+# Prevents the Ubuntu 24.04 socket-activation SSH lockout from silently
+# recurring after a reboot or package upgrade:
+#
+#   1. MASK ssh.socket — unlike `disable`, masking symlinks the unit to
+#      /dev/null so NO package script or reboot can re-enable it.
+#   2. Ensure standalone ssh.service is enabled and running (it binds the
+#      CONFIGURED port, not the default socket port).
+#   3. Assert sshd is actually listening on the configured port; if not,
+#      restart ssh and re-check.
+#
+# Idempotent and safe to run at any time. Best-effort: logs clearly but
+# never blocks boot (a failed oneshot does not halt the machine).
+
+set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../install/lib/common.sh
+source "${SCRIPT_DIR}/../install/lib/common.sh"
+
+main() {
+  # 1. Mask ssh.socket (prevents ANY re-enable, incl. package scripts/reboot).
+  if [ -L /etc/systemd/system/ssh.socket ] \
+      && [ "$(readlink /etc/systemd/system/ssh.socket)" = "/dev/null" ]; then
+    log_info "ssh-guard: ssh.socket already masked"
+  else
+    log_info "ssh-guard: masking ssh.socket"
+    systemctl mask --now ssh.socket 2>/dev/null || true
+  fi
+
+  # 2. Ensure standalone sshd is enabled + running.
+  systemctl enable ssh.service 2>/dev/null || true
+  if ! systemctl is-active --quiet ssh.service; then
+    log_info "ssh-guard: starting ssh.service"
+    systemctl start ssh.service 2>/dev/null || true
+  fi
+
+  # 3. Assert sshd is listening on the configured port.
+  local ssh_port
+  ssh_port="$(sshd -T 2>/dev/null | sed -n 's/^port //p' | tail -1)" || true
+  ssh_port="${ssh_port:-22}"
+
+  if ss -tlnp 2>/dev/null | grep -qE ":${ssh_port}\\b.*sshd"; then
+    log_info "ssh-guard: sshd listening on configured port ${ssh_port}"
+    return 0
+  fi
+
+  log_warn "ssh-guard: sshd NOT listening on configured port ${ssh_port} — restarting ssh"
+  systemctl restart ssh 2>/dev/null || true
+  sleep 2
+  if ss -tlnp 2>/dev/null | grep -qE ":${ssh_port}\\b.*sshd"; then
+    log_info "ssh-guard: sshd listening on port ${ssh_port} after restart"
+  else
+    log_error "ssh-guard: FAILED to bring sshd up on port ${ssh_port} — investigate"
+  fi
+}
+
+main "$@"

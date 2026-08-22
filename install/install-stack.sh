@@ -92,9 +92,16 @@ verify_ssh_access() {
     log_info "verify-ssh: sshd listening on configured port ${ssh_port}"
   fi
 
-  # 2. Socket-activated SSH must be disabled (else it owns a different port).
+  # 2. Socket-activated SSH must be MASKED (not just inactive). Masking
+  #    prevents a reboot/package upgrade from re-enabling it. An enabled-but-
+  #    inactive socket is exactly the pre-reboot state that caused the lockout.
+  local sock_state
+  sock_state="$(systemctl is-enabled ssh.socket 2>/dev/null || echo unknown)"
   if systemctl is-active ssh.socket >/dev/null 2>&1; then
-    log_error "verify-ssh: ssh.socket is STILL active — it binds the default port regardless of the Port directive"
+    log_error "verify-ssh: ssh.socket is ACTIVE — it binds the default port regardless of the Port directive"
+    problems=1
+  elif [ "${sock_state}" != "masked" ]; then
+    log_error "verify-ssh: ssh.socket is '${sock_state}' (not masked) — a reboot/package upgrade could re-enable it"
     problems=1
   fi
 

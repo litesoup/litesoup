@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed (issue #75 follow-up)
+
+- **SSH lockout fix now survives a reboot** — the v0.10.9 fix used
+  `systemctl disable --now ssh.socket`, but `disable` only removes the
+  wants-symlinks; a reboot or `unattended-upgrades` kernel update re-enables
+  the socket, re-breaking SSH on a non-standard port. `harden-ssh.sh` now
+  **masks** `ssh.socket` (symlinks it to `/dev/null`), so no package script
+  or reboot can re-enable it.
+- **Boot-time guard** — harden-ssh installs a systemd oneshot
+  (`litesoup-ssh-guard.service`) that runs at every boot to re-mask
+  `ssh.socket`, ensure standalone `ssh.service` is running, and assert sshd
+  is listening on the configured port, so the lockout cannot silently recur.
+  (`harden/harden-ssh.sh`, `harden/ssh-guard.sh`)
+- **`verify_ssh_access` now asserts the masked state** — it flags an
+  enabled-but-inactive socket (the exact pre-reboot state that caused the
+  lockout), not just an active one. (`install/install-stack.sh`,
+  `test/bats/unit_harden.bats`)
+
 ## [0.10.9] - 2026-08-21
 
 ### Fixed (issue #75)

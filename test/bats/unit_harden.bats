@@ -321,21 +321,29 @@ EOF
 
 # --- issue #75: socket-activation hardening must run during install-stack ---
 
-@test "harden-ssh disables ssh.socket (issue #75)" {
+@test "harden-ssh MASKS ssh.socket (issue #75 follow-up)" {
   # Ubuntu 24.04 socket-activated SSH binds the default port regardless of the
-  # Port directive. harden-ssh must switch to standalone sshd or a default-deny
-  # firewall opens the config port while the socket owns a different one.
-  grep -q 'systemctl disable --now ssh.socket' "${REPO_ROOT}/harden/harden-ssh.sh"
+  # Port directive. harden-ssh must MASK ssh.socket (not just disable) and
+  # switch to standalone sshd, or a default-deny firewall opens the config port
+  # while the socket owns a different one → lockout. Masking (vs disable) is
+  # what survives a reboot / package upgrade.
+  grep -q 'systemctl mask --now ssh.socket' "${REPO_ROOT}/harden/harden-ssh.sh"
+}
+
+@test "harden-ssh no longer uses disable --now for ssh.socket" {
+  # disable only removes the wants-symlinks — a reboot/package upgrade can
+  # re-enable the socket, which is exactly the recurrence the follow-up fixes.
+  ! grep -q 'systemctl disable --now ssh.socket' "${REPO_ROOT}/harden/harden-ssh.sh"
 }
 
 @test "harden-ssh socket check runs BEFORE reload (outside the CHANGED gate)" {
-  # The socket-disable must not be gated behind `if [ "${CHANGED}" = "1" ]` —
-  # it must run on every invocation so a package upgrade that re-enables the
-  # socket is caught on re-run. Structurally: the socket-disable line must come
+  # The socket-mask must not be gated behind `if [ "${CHANGED}" = "1" ]` — it
+  # must run on every invocation so a package upgrade that re-enables the
+  # socket is caught on re-run. Structurally: the socket-mask line must come
   # before the `systemctl reload ssh` line (reload is what sits inside the
   # CHANGED gate).
   local sock_line reload_line
-  sock_line="$(grep -n 'systemctl disable --now ssh.socket' "${REPO_ROOT}/harden/harden-ssh.sh" | head -1 | cut -d: -f1)"
+  sock_line="$(grep -n 'systemctl mask --now ssh.socket' "${REPO_ROOT}/harden/harden-ssh.sh" | head -1 | cut -d: -f1)"
   reload_line="$(grep -n 'systemctl reload ssh' "${REPO_ROOT}/harden/harden-ssh.sh" | head -1 | cut -d: -f1)"
   [ -n "${sock_line}" ] && [ -n "${reload_line}" ]
   [ "${sock_line}" -lt "${reload_line}" ]
@@ -344,6 +352,25 @@ EOF
 @test "harden-ssh socket check resolves the configured port via sshd -T" {
   # Standalone sshd binds the CONFIG port, which is what the firewall opens.
   grep -q 'sshd -T' "${REPO_ROOT}/harden/harden-ssh.sh"
+}
+
+@test "harden-ssh installs a boot-time guard unit (issue #75 follow-up)" {
+  # The guard re-asserts the mask + standalone sshd at every boot so the
+  # lockout cannot silently recur after a reboot or package upgrade.
+  grep -q 'litesoup-ssh-guard.service' "${REPO_ROOT}/harden/harden-ssh.sh"
+  grep -q 'install_ssh_guard' "${REPO_ROOT}/harden/harden-ssh.sh"
+}
+
+@test "ssh-guard.sh exists and masks ssh.socket (issue #75 follow-up)" {
+  [ -f "${REPO_ROOT}/harden/ssh-guard.sh" ]
+  grep -q 'systemctl mask --now ssh.socket' "${REPO_ROOT}/harden/ssh-guard.sh"
+}
+
+@test "verify-ssh asserts ssh.socket is masked (issue #75 follow-up)" {
+  # verify_ssh_access must catch an enabled-but-inactive socket (the exact
+  # pre-reboot state that caused the lockout) by asserting the masked state.
+  grep -q 'is-enabled ssh.socket' "${REPO_ROOT}/install/install-stack.sh"
+  grep -q '"masked"' "${REPO_ROOT}/install/install-stack.sh"
 }
 
 @test "install-stack calls harden-ssh BEFORE harden-firewall (issue #75)" {
