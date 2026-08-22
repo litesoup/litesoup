@@ -44,11 +44,14 @@ Opt-in extras (only added when the matching flag is passed):
   PermitRootLogin no          # requires --no-root-login
 
 Behavior:
-  0. Disable Ubuntu 24.04 socket-activated SSH (ssh.socket) and switch to
-     standalone sshd, which binds the CONFIG port. Runs on every invocation
-     (idempotent) so a package upgrade that re-enables the socket is caught
-     on re-run. This MUST happen before harden-firewall.sh so the port the
-     firewall opens is the one sshd actually listens on.
+  0. MASK Ubuntu 24.04 socket-activated SSH (ssh.socket) and switch to
+     standalone sshd, which binds the CONFIG port. Masking (not just
+     disabling) makes it impossible for a package upgrade or reboot to
+     re-enable the socket. Also installs a boot-time systemd guard
+     (litesoup-ssh-guard.service) that re-asserts the mask + standalone
+     sshd at every boot, so the lockout cannot silently recur. Runs on
+     every invocation (idempotent). MUST happen before harden-firewall.sh
+     so the port the firewall opens is the one sshd actually listens on.
   1. Render desired sshd hardening directives based on flags.
   2. Write them to /etc/ssh/sshd_config.d/52-litesoup-harden.conf
      (mode 0644 root:root) only when content differs. The 52- prefix
@@ -101,6 +104,47 @@ write_override_if_changed() {
   fi
 }
 
+# install_ssh_guard — install the boot-time SSH guard (issue #75 follow-up).
+# Copies harden/ssh-guard.sh to the installed lib dir and wires up a systemd
+# oneshot (litesoup-ssh-guard.service) that runs at every boot to re-mask
+# ssh.socket and assert sshd is listening on the configured port. This is what
+# makes the socket-activation lockout non-recurring: even if a package upgrade
+# recreates ssh.socket, the guard re-masks it on the next boot.
+install_ssh_guard() {
+  local guard_src="${SCRIPT_DIR}/ssh-guard.sh"
+  local guard_dst="/usr/lib/litesoup/harden/ssh-guard.sh"
+  local unit="/etc/systemd/system/litesoup-ssh-guard.service"
+
+  # Copy the guard script to the installed lib dir (idempotent). When running
+  # from the installed location, src == dst and the copy is skipped.
+  if [ -f "${guard_src}" ] && [ "${guard_src}" != "${guard_dst}" ]; then
+    install -d -m 0755 "$(dirname "${guard_dst}")"
+    install -m 0755 "${guard_src}" "${guard_dst}"
+  elif [ ! -f "${guard_dst}" ]; then
+    log_warn "harden-ssh: ssh-guard.sh not found (${guard_src}) — skipping boot-time guard"
+    return 0
+  fi
+
+  cat > "${unit}" <<UNITEOF
+[Unit]
+Description=LiteSoup SSH boot guard — mask ssh.socket, assert sshd on configured port
+After=network.target ssh.service
+ConditionPathExists=/etc/ssh/sshd_config
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=${guard_dst}
+
+[Install]
+WantedBy=multi-user.target
+UNITEOF
+
+  systemctl daemon-reload
+  systemctl enable litesoup-ssh-guard.service >/dev/null 2>&1 || true
+  log_info "harden-ssh: boot-time SSH guard installed (${unit})"
+}
+
 main() {
   local arg
   for arg in "$@"; do
@@ -146,31 +190,45 @@ main() {
   #    port. A default-deny firewall (harden-firewall.sh) then opens the config
   #    port and blocks the socket port → operator is locked out.
   #
-  #    Fix: switch to traditional standalone sshd (ssh.service), which reads the
-  #    config chain and binds the CONFIG port. This MUST run before any reload /
-  #    health-check and before harden-firewall.sh, so the port the firewall opens
-  #    is the one sshd actually listens on.
+  #    Fix: MASK ssh.socket (not just disable) and switch to traditional
+  #    standalone sshd (ssh.service), which reads the config chain and binds the
+  #    CONFIG port. Masking symlinks the unit to /dev/null so NO package script
+  #    or reboot can re-enable it. This MUST run before any reload / health-check
+  #    and before harden-firewall.sh, so the port the firewall opens is the one
+  #    sshd actually listens on.
   #
-  #    This runs on EVERY invocation (not just when the override changed), so a
-  #    package upgrade that re-enables the socket is caught on re-run. It is
-  #    idempotent: once the socket is disabled it stays disabled.
+  #    Check `is-enabled` (not just `is-active`): after a reboot the socket is
+  #    ENABLED but inactive until a connection arrives, so an `is-active` test
+  #    alone would miss it. Runs on EVERY invocation; masking is idempotent.
   if [ "${DRY_RUN}" != "1" ]; then
-    if systemctl is-active ssh.socket >/dev/null 2>&1; then
-      log_warn "harden-ssh: ssh.socket is active (Ubuntu 24.04 socket-activated SSH)"
+    local sock_state
+    sock_state="$(systemctl is-enabled ssh.socket 2>/dev/null || echo unknown)"
+    if [ "${sock_state}" != "masked" ]; then
+      log_warn "harden-ssh: ssh.socket is '${sock_state}' (Ubuntu 24.04 socket-activated SSH)"
       log_warn "harden-ssh:    it binds the default port regardless of the Port directive."
-      log_info "harden-ssh: switching to traditional standalone sshd (port ${ssh_port})..."
-      systemctl disable --now ssh.socket 2>/dev/null || true
+      log_info "harden-ssh: masking ssh.socket and switching to standalone sshd (port ${ssh_port})..."
+      systemctl mask --now ssh.socket 2>/dev/null || true
       systemctl enable --now ssh.service 2>/dev/null || true
       # Give sshd a moment to bind the config port.
-      if ! ss -tlnp 2>/dev/null | grep -qE ":${ssh_port}\\b.*sshd"; then
+      if ! ss -tlnp 2>/dev/null | grep -qE ":${ssh_port}\b.*sshd"; then
         sleep 2
       fi
-      if ss -tlnp 2>/dev/null | grep -qE ":${ssh_port}\\b.*sshd"; then
+      if ss -tlnp 2>/dev/null | grep -qE ":${ssh_port}\b.*sshd"; then
         log_info "harden-ssh: sshd now owns port ${ssh_port} directly"
       else
         log_warn "harden-ssh: could not verify sshd owns port ${ssh_port} directly"
       fi
     fi
+  fi
+
+  # 0b. BOOT-TIME GUARD (issue #75 follow-up). `mask` survives reboot, but a
+  #     package upgrade could theoretically recreate the socket. Install a
+  #     systemd oneshot (litesoup-ssh-guard.service) that re-asserts the mask +
+  #     standalone sshd at every boot, so the lockout cannot silently recur.
+  if [ "${DRY_RUN}" != "1" ]; then
+    install_ssh_guard
+  else
+    log_info "[DRYRUN] would install litesoup-ssh-guard.service + /usr/lib/litesoup/harden/ssh-guard.sh"
   fi
 
   # 1. Render desired override content. Heredoc gives us REAL newlines; using

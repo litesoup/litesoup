@@ -129,12 +129,21 @@ and spawns sshd on demand — regardless of the `Port` directive in the
 config chain. If you set a non-standard port via a drop-in, the socket
 still owns the default port while nothing listens on your configured
 port. A default-deny firewall that opens only the configured port then
-blocks the socket port → lockout. To prevent this, harden-ssh disables
-`ssh.socket` and enables standalone `ssh.service`, which reads the config
-chain and binds the configured port. This runs on **every** invocation
-(idempotent), so a package upgrade that re-enables the socket is caught
-on re-run. Because of this, install-stack runs harden-ssh **before**
-harden-firewall.
+blocks the socket port → lockout. To prevent this, harden-ssh **masks**
+`ssh.socket` (symlinks it to `/dev/null`, so no package script or reboot
+can re-enable it) and enables standalone `ssh.service`, which reads the
+config chain and binds the configured port. This runs on **every**
+invocation (idempotent), so a package upgrade that re-enables the socket
+is caught on re-run. Because of this, install-stack runs harden-ssh
+**before** harden-firewall.
+
+**Boot-time guard (survives reboot).** `disable` alone is not enough — a
+reboot or `unattended-upgrades` kernel update can re-enable `ssh.socket`,
+re-breaking SSH exactly as before. harden-ssh therefore installs a
+systemd oneshot, `litesoup-ssh-guard.service`, that runs at **every boot**
+to re-mask `ssh.socket`, ensure standalone `ssh.service` is running, and
+assert sshd is listening on the configured port. The lockout cannot
+silently recur.
 
 ### harden-apache.sh
 
