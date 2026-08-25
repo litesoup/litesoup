@@ -4,6 +4,34 @@ All notable changes to this project will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.11] - 2026-08-25
+
+### Fixed (issues #78, #79)
+
+- **harden-ssh no longer locks out SSH on Ubuntu 24.04 with a non-standard
+  port** — the v0.10.10 transition masked `ssh.socket` *before* starting
+  standalone `ssh.service`, which trips the `ssh.service` ↔ `ssh.socket`
+  dependency (`ssh.service` cannot start while the socket it depends on is
+  masked) → no SSH listener on any port. `harden-ssh.sh` now transitions in
+  the correct order: stop+disable the socket → start standalone `ssh.service`
+  → *then* mask the socket. It also checks the `ssh.service` start exit status
+  and rolls back to socket activation (instead of swallowing the failure with
+  `|| true`) if the standalone service cannot come up. (`harden/harden-ssh.sh`)
+- **`sshd -t` no longer aborts on a missing privilege-separation dir** —
+  `/run/sshd` (a tmpfs) is absent on a fresh socket-activated host, so
+  `sshd -t` failed with "Missing privilege separation directory" and made
+  harden-ssh revert + exit, leaving SSH down. The script now creates
+  `/run/sshd` before any `sshd -t` / `sshd -T` call. (`harden/harden-ssh.sh`,
+  `harden/ssh-guard.sh`)
+- **Site-owner user default shell is now `/bin/bash`** — `install/lib/users.sh`
+  created the `litesoup` user with `/usr/sbin/nologin`, rejecting SSH to the
+  account that owns `/home/litesoup/webapps/` even with a valid key. Default is
+  now `/bin/bash` (overridable via `SITE_USER_SHELL=/usr/sbin/nologin` for a
+  locked-down "service account" posture). (`install/lib/users.sh`)
+- **Regression tests** for both fixes added to `test/bats/unit_harden.bats`
+  (transition ordering, no-swallow, `/run/sshd` before `sshd -t`, default
+  shell).
+
 ## [0.10.10] - 2026-08-22
 
 ### Fixed (issue #75 follow-up)

@@ -10,17 +10,24 @@ LITESOUP_USERS_SH=1
 # shellcheck disable=SC2034  # consumed by callers after sourcing
 DEFAULT_SITE_USER="litesoup"
 
+# Login shell for site-owner accounts. Defaults to /bin/bash so operators can
+# SSH as the site owner (the account that owns /home/<user>/webapps/) for
+# git pull / wp-cli / file ops. Override with SITE_USER_SHELL=/usr/sbin/nologin
+# for a locked-down "service account" posture where the site user must never
+# get an interactive shell (issue #79).
+SITE_USER_SHELL="${SITE_USER_SHELL:-/bin/bash}"
+
 ensure_user() {
   local user="${1:?ensure_user: username required}"
 
   if id "${user}" >/dev/null 2>&1; then
     log_info "users: ${user} already exists"
   else
-    log_info "users: creating ${user} (home=/home/${user}, shell=/usr/sbin/nologin)"
+    log_info "users: creating ${user} (home=/home/${user}, shell=${SITE_USER_SHELL})"
     run_or_dryrun useradd \
       --create-home \
       --home-dir "/home/${user}" \
-      --shell /usr/sbin/nologin \
+      --shell "${SITE_USER_SHELL}" \
       --user-group \
       "${user}"
   fi

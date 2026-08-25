@@ -393,3 +393,48 @@ EOF
   run -0 bash "${REPO_ROOT}/install/install-stack.sh" --help
   [[ "${output}" == *"harden-ssh"* ]]
 }
+
+# --- issue #78: standalone-sshd transition order + /run/sshd ---
+
+@test "harden-ssh stops socket BEFORE starting ssh.service, masks AFTER (issue #78)" {
+  # #78: masking ssh.socket BEFORE starting standalone ssh.service trips the
+  # ssh.service <-> ssh.socket dependency and the service fails to start
+  # ("Unit ssh.socket is masked") -> total SSH lockout. The socket must be
+  # stopped/disabled first, ssh.service started, and only THEN masked.
+  local stop_line start_line mask_line
+  stop_line="$(grep -n 'systemctl stop ssh.socket' "${REPO_ROOT}/harden/harden-ssh.sh" | head -1 | cut -d: -f1)"
+  start_line="$(grep -n 'systemctl start ssh.service' "${REPO_ROOT}/harden/harden-ssh.sh" | head -1 | cut -d: -f1)"
+  mask_line="$(grep -n 'systemctl mask --now ssh.socket' "${REPO_ROOT}/harden/harden-ssh.sh" | head -1 | cut -d: -f1)"
+  [ -n "${stop_line}" ] && [ -n "${start_line}" ] && [ -n "${mask_line}" ]
+  [ "${stop_line}" -lt "${start_line}" ]
+  [ "${start_line}" -lt "${mask_line}" ]
+}
+
+@test "harden-ssh does not swallow ssh.service start failure (issue #78)" {
+  # The old code used `systemctl enable --now ssh.service 2>/dev/null || true`,
+  # hiding the failure when the masked socket blocked the service start. The
+  # fix checks the exit status and rolls back to socket activation instead.
+  grep -q 'if ! systemctl start ssh.service' "${REPO_ROOT}/harden/harden-ssh.sh"
+  grep -q 'restoring ssh.socket' "${REPO_ROOT}/harden/harden-ssh.sh"
+}
+
+@test "harden-ssh creates /run/sshd before sshd -t (issue #78)" {
+  # The privilege-separation dir is a tmpfs that is absent on a fresh
+  # socket-activated host; without it `sshd -t` aborts ("Missing privilege
+  # separation directory"), causing harden-ssh to revert and exit -> SSH down.
+  local run_line t_line
+  run_line="$(grep -n '/run/sshd' "${REPO_ROOT}/harden/harden-ssh.sh" | head -1 | cut -d: -f1)"
+  t_line="$(grep -n 'if ! sshd -t' "${REPO_ROOT}/harden/harden-ssh.sh" | head -1 | cut -d: -f1)"
+  [ -n "${run_line}" ] && [ -n "${t_line}" ]
+  [ "${run_line}" -lt "${t_line}" ]
+}
+
+# --- issue #79: site-owner user default shell ---
+
+@test "users.sh defaults site-owner shell to /bin/bash (issue #79)" {
+  # The litesoup user owns /home/litesoup/webapps/ and is the natural account
+  # to SSH into; a nologin shell rejects SSH even with a valid key. Default
+  # must be /bin/bash (overridable via SITE_USER_SHELL).
+  grep -q 'SITE_USER_SHELL="${SITE_USER_SHELL:-/bin/bash}"' "${REPO_ROOT}/install/lib/users.sh"
+  ! grep -q -- '--shell /usr/sbin/nologin' "${REPO_ROOT}/install/lib/users.sh"
+}
