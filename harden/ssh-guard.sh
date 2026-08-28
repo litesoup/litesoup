@@ -22,6 +22,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../install/lib/common.sh"
 
 main() {
+  # Ensure the privilege-separation dir exists before any `sshd -T` call
+  # (issue #78). On a fresh socket-activated host /run/sshd (tmpfs) is absent
+  # until sshd runs; without it sshd -T aborts.
+  install -d -m 0755 -o root -g root /run/sshd 2>/dev/null || true
+
   # 1. Mask ssh.socket (prevents ANY re-enable, incl. package scripts/reboot).
   if [ -L /etc/systemd/system/ssh.socket ] \
       && [ "$(readlink /etc/systemd/system/ssh.socket)" = "/dev/null" ]; then

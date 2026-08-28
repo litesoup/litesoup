@@ -160,6 +160,13 @@ main() {
 
   require_root
 
+  # Ensure the privilege-separation directory exists (issue #78). On a fresh
+  # socket-activated Ubuntu 24.04 host, /run/sshd (a tmpfs) is empty/absent
+  # until sshd actually runs. Without it, `sshd -t` / `sshd -T` abort with
+  # "Missing privilege separation directory: /run/sshd", which made harden-ssh
+  # fail validation, revert, and exit — leaving SSH down on every port.
+  install -d -m 0755 -o root -g root /run/sshd 2>/dev/null || true
+
   # Sanity-check the drop-in dir. On Ubuntu 24.04 this exists out of the box;
   # if it is missing the package is broken or we are not on Ubuntu and the
   # main sshd_config will not Include our file anyway.
@@ -206,17 +213,51 @@ main() {
     if [ "${sock_state}" != "masked" ]; then
       log_warn "harden-ssh: ssh.socket is '${sock_state}' (Ubuntu 24.04 socket-activated SSH)"
       log_warn "harden-ssh:    it binds the default port regardless of the Port directive."
-      log_info "harden-ssh: masking ssh.socket and switching to standalone sshd (port ${ssh_port})..."
+      log_info "harden-ssh: switching to standalone sshd on port ${ssh_port}..."
+
+      # TRANSITION ORDER MATTERS (issue #78). Masking ssh.socket BEFORE starting
+      # ssh.service trips the ssh.service <-> ssh.socket dependency and the
+      # standalone service fails to start ("Unit ssh.socket is masked") -> total
+      # SSH lockout. Correct order:
+      #   1. stop + disable the socket (it is the active listener),
+      #   2. start standalone ssh.service (binds the CONFIG port),
+      #   3. only THEN mask the socket so no package script / reboot can
+      #      resurrect it. Masking an already-stopped socket is a no-op.
+      systemctl stop ssh.socket 2>/dev/null || true
+      systemctl disable ssh.socket 2>/dev/null || true
+
+      local en_rc st_rc
+      if ! systemctl enable ssh.service 2>/dev/null; then
+        en_rc=$?
+        log_error "harden-ssh: could not enable ssh.service (exit ${en_rc}) — restoring socket activation"
+        systemctl enable --now ssh.socket 2>/dev/null || true
+        exit 1
+      fi
+      if ! systemctl start ssh.service 2>/dev/null; then
+        st_rc=$?
+        log_error "harden-ssh: FAILED to start standalone ssh.service (exit ${st_rc})"
+        log_error "harden-ssh: restoring ssh.socket so SSH is not lost"
+        systemctl enable --now ssh.socket 2>/dev/null || true
+        exit 1
+      fi
+      # sshd is now running standalone on the config port — mask the socket so
+      # nothing can re-enable it (idempotent; --now on a stopped socket is a no-op).
       systemctl mask --now ssh.socket 2>/dev/null || true
-      systemctl enable --now ssh.service 2>/dev/null || true
-      # Give sshd a moment to bind the config port.
+
+      # Give sshd a moment to bind the config port, then verify. If the
+      # configured port has no sshd listener after the transition, roll back to
+      # socket activation rather than leave the operator locked out.
       if ! ss -tlnp 2>/dev/null | grep -qE ":${ssh_port}\b.*sshd"; then
         sleep 2
       fi
       if ss -tlnp 2>/dev/null | grep -qE ":${ssh_port}\b.*sshd"; then
         log_info "harden-ssh: sshd now owns port ${ssh_port} directly"
       else
-        log_warn "harden-ssh: could not verify sshd owns port ${ssh_port} directly"
+        log_error "harden-ssh: sshd is NOT listening on port ${ssh_port} after transition"
+        log_error "harden-ssh: restoring ssh.socket to avoid lockout"
+        systemctl unmask ssh.socket 2>/dev/null || true
+        systemctl enable --now ssh.socket 2>/dev/null || true
+        exit 1
       fi
     fi
   fi
