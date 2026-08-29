@@ -9,11 +9,14 @@
 #   backup_site_user     DOMAIN → SITE_USER   (via /etc/litesoup/vhost/*.conf)
 #   backup_docroot       DOMAIN → path        (via /etc/litesoup/vhost/*.conf)
 #   backup_timestamp     → "YYYY-MM-DD_HHMMSS"
-#   backup_archive       SRCDIR DEST          → tar.gz
-#   backup_dump_db       DOMAIN DEST          → .sql
+#   backup_archive       SRCDIR DEST          → tar.zst
+#   backup_dump_db       DOMAIN DEST          → .sql.zst
 #   backup_rotate_local  BACKUP_DIR KEEP      → prune excess dirs
 #   backup_size_human    PATH                 → "123M" / "1.2G"
 #   backup_validate_name DOMAIN               → safe string (alphanum + dots)
+#   backup_require_zstd  —                    → ensure zstd is installed
+#   backup_verify_archive ARCHIVE             → zstd -t integrity check
+#   backup_verify_db     DUMP                 → integrity + CREATE TABLE check
 
 [ -n "${LITESOUP_BACKUP_COMMON_SH:-}" ] && return 0
 LITESOUP_BACKUP_COMMON_SH=1
@@ -85,7 +88,10 @@ backup_docroot() {
 
 # ---- file archive ----------------------------------------------------------
 
-# backup_archive SRCDIR DEST — creates SRCDIR/DEST.tar.gz
+# backup_archive SRCDIR DEST — creates SRCDIR/DEST.tar.zst (zstd-compressed).
+# Media (already-compressed jpg/png) barely compresses with any tool, so we
+# use zstd -1: ~12x faster than gzip -6 with the same ratio (benchmarked on
+# sg10, 2026-08-29 — team-rd #17).
 # Skips patterns listed in a global exclude file if present.
 backup_archive() {
   local srcdir="${1:?backup_archive: srcdir required}"
@@ -98,9 +104,9 @@ backup_archive() {
     return 1
   fi
 
-  log_info "backup: archiving ${srcdir} → ${dest}.tar.gz"
+  log_info "backup: archiving ${srcdir} → ${dest}.tar.zst"
   if [ "${DRY_RUN}" = "1" ]; then
-    log_info "[DRYRUN] would tar -czf ${dest}.tar.gz -C $(dirname "${srcdir}") $(basename "${srcdir}")"
+    log_info "[DRYRUN] would tar -cf - -C $(dirname "${srcdir}") $(basename "${srcdir}") | zstd -1 > ${dest}.tar.zst"
     return 0
   fi
 
@@ -115,19 +121,21 @@ backup_archive() {
     done < "${REPO_ROOT}/backup/backup-exclude-global.txt"
   fi
 
-  tar -czf "${dest}.tar.gz" \
+  tar -cf - \
     "${exclude_opts[@]}" \
     -C "$(dirname "${srcdir}")" \
-    "$(basename "${srcdir}")" 2>/dev/null
-  log_info "backup: archive created ($(backup_size_human "${dest}.tar.gz"))"
+    "$(basename "${srcdir}")" 2>/dev/null | zstd -1 > "${dest}.tar.zst"
+  log_info "backup: archive created ($(backup_size_human "${dest}.tar.zst"))"
 }
 
 # ---- database dump ---------------------------------------------------------
 
-# backup_dump_db DOMAIN DEST — uses wp-cli to export the site's database.
-# DEST/database.sql is created with mode 0600 owned by root.
+# backup_dump_db DOMAIN DEST — uses wp-cli to export the site's database and
+# compress it with zstd -8 (2x faster + ~40% smaller than gzip -6 on SQL text;
+# benchmarked on sg10, 2026-08-29 — team-rd #17).
+# DEST/database.sql.zst is created with mode 0600 owned by root.
 # Discovers docroot via backup_docroot(), then runs:
-#   sudo -u SITE_USER wp --path=DOCROOT db export DEST/database.sql
+#   sudo -u SITE_USER wp --path=DOCROOT db export - | zstd -8 > DEST/database.sql.zst
 backup_dump_db() {
   local domain="${1:?backup_dump_db: domain required}"
   local dest_dir="${2:?backup_dump_db: dest_dir required}"
@@ -141,20 +149,20 @@ backup_dump_db() {
     return 1
   fi
 
-  log_info "backup: dumping database for ${domain} → ${dest_dir}/database.sql"
+  log_info "backup: dumping database for ${domain} → ${dest_dir}/database.sql.zst"
   if [ "${DRY_RUN}" = "1" ]; then
-    log_info "[DRYRUN] would run: sudo -u ${user} wp --path=${docroot} db export ${dest_dir}/database.sql"
+    log_info "[DRYRUN] would run: sudo -u ${user} wp --path=${docroot} db export - | zstd -8 > ${dest_dir}/database.sql.zst"
     return 0
   fi
 
   mkdir -p "${dest_dir}"
   chown "${user}:${user}" "${dest_dir}"
-  sudo -H -u "${user}" wp --path="${docroot}" db export "${dest_dir}/database.sql" 2>/dev/null || {
+  sudo -H -u "${user}" wp --path="${docroot}" db export - 2>/dev/null | zstd -8 > "${dest_dir}/database.sql.zst" || {
     log_error "backup: wp db export failed for ${domain}"
     return 1
   }
-  chmod 0600 "${dest_dir}/database.sql"
-  log_info "backup: database exported ($(backup_size_human "${dest_dir}/database.sql"))"
+  chmod 0600 "${dest_dir}/database.sql.zst"
+  log_info "backup: database exported ($(backup_size_human "${dest_dir}/database.sql.zst"))"
 }
 
 # ---- local rotation --------------------------------------------------------
@@ -212,4 +220,51 @@ backup_size_human() {
   else
     printf '%.1f GB' "$(echo "scale=1; ${bytes} / 1073741824" | bc 2>/dev/null || echo 0)"
   fi
+}
+
+# ---- compression dependency + verification ---------------------------------
+
+# backup_require_zstd — ensure the zstd binary is available (runtime dep of the
+# default compression). Installs it via apt if missing.
+backup_require_zstd() {
+  if ! command -v zstd &>/dev/null; then
+    log_info "backup: installing zstd"
+    ensure_pkgs zstd
+  fi
+}
+
+# backup_verify_archive ARCHIVE — integrity-check a zstd-compressed archive
+# (files.tar.zst). Runs `zstd -t`; fails loudly if corrupt.
+backup_verify_archive() {
+  local archive="${1:?backup_verify_archive: archive required}"
+  if [ ! -f "${archive}" ]; then
+    log_error "backup: archive not found for verification: ${archive}"
+    return 1
+  fi
+  zstd -t "${archive}" 2>/dev/null || {
+    log_error "backup: archive integrity check FAILED: ${archive}"
+    return 1
+  }
+  log_info "backup: archive integrity OK: ${archive}"
+}
+
+# backup_verify_db DUMP — verify a zstd-compressed SQL dump: runs `zstd -t`,
+# then decompresses and asserts at least one `CREATE TABLE` statement exists.
+backup_verify_db() {
+  local dump="${1:?backup_verify_db: dump required}"
+  if [ ! -f "${dump}" ]; then
+    log_error "backup: db dump not found for verification: ${dump}"
+    return 1
+  fi
+  zstd -t "${dump}" 2>/dev/null || {
+    log_error "backup: db dump integrity check FAILED: ${dump}"
+    return 1
+  }
+  local tables
+  tables="$(zstd -dc "${dump}" 2>/dev/null | grep -c 'CREATE TABLE' || true)"
+  if [ "${tables}" -lt 1 ]; then
+    log_error "backup: db dump verification FAILED (no CREATE TABLE found): ${dump}"
+    return 1
+  fi
+  log_info "backup: db dump verified (${tables} CREATE TABLE statements): ${dump}"
 }

@@ -373,6 +373,9 @@ main() {
   # operator is ready).
   local backup_stage=$(( total_stages + 1 ))
   log_info "stage ${backup_stage}/${total_stages}: backup scripts + notification"
+  # zstd is the default backup compression — ensure it's installed so new
+  # instances produce .zst archives out of the box.
+  run_or_dryrun ensure_pkgs zstd
   local repo_backup="${repo_root}/backup"
   if [ -d "${repo_backup}" ]; then
     run_or_dryrun install -d -m 0755 "${litesoup_lib}/backup/lib"

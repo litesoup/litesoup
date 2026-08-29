@@ -84,6 +84,9 @@ main() {
   parse_args "$@"
   require_root
 
+  # Backups are zstd-compressed by default — ensure the binary is present.
+  backup_require_zstd
+
   if [ -z "${DOMAIN}" ]; then
     log_error "--domain is required"
     usage
@@ -135,7 +138,7 @@ main() {
 
   # 4. Restore files
   if [ "${SKIP_FILES}" != "1" ]; then
-    local archive="${restore_dir}/files.tar.gz"
+    local archive="${restore_dir}/files.tar.zst"
     if [ ! -f "${archive}" ]; then
       log_error "restore: file archive not found: ${archive}"
       log_error "restore: use --skip-files if restoring database only"
@@ -144,12 +147,12 @@ main() {
     log_info "restore: extracting files to ${docroot}..."
 
     if [ "${DRY_RUN}" = "1" ]; then
-      log_info "[DRYRUN] would tar -xzf ${archive} -C /"
+      log_info "[DRYRUN] would tar --zstd -xf ${archive} -C /"
       log_info "[DRYRUN] would chown -R ${SITE_USER}:${SITE_USER} ${docroot}"
     else
       # Archive was created with -C parent_dir basename, so extract from /
       # restores the full path: /home/<user>/webapps/<domain>/
-      tar -xzf "${archive}" -C / 2>/dev/null || {
+      tar --zstd -xf "${archive}" -C / 2>/dev/null || {
         log_error "restore: failed to extract files"
         exit 1
       }
@@ -160,7 +163,7 @@ main() {
 
   # 5. Restore database
   if [ "${SKIP_DB}" != "1" ]; then
-    local sql_dump="${restore_dir}/database.sql"
+    local sql_dump="${restore_dir}/database.sql.zst"
     if [ ! -f "${sql_dump}" ]; then
       log_error "restore: database dump not found: ${sql_dump}"
       log_error "restore: use --skip-db if restoring files only"
@@ -169,11 +172,11 @@ main() {
     log_info "restore: importing database for ${DOMAIN}..."
 
     if [ "${DRY_RUN}" = "1" ]; then
-      log_info "[DRYRUN] would run: sudo -u ${SITE_USER} wp --path=${docroot} db import ${sql_dump}"
+      log_info "[DRYRUN] would run: zstd -dc ${sql_dump} | sudo -u ${SITE_USER} wp --path=${docroot} db import -"
     else
-      sudo -H -u "${SITE_USER}" wp --path="${docroot}" db import "${sql_dump}" 2>/dev/null || {
+      zstd -dc "${sql_dump}" 2>/dev/null | sudo -H -u "${SITE_USER}" wp --path="${docroot}" db import - 2>/dev/null || {
         log_error "restore: wp db import failed"
-        log_error "restore: you may need to run: wp db import ${sql_dump} manually"
+        log_error "restore: you may need to run: zstd -dc ${sql_dump} | wp db import - manually"
         exit 1
       }
       log_info "restore: database imported"

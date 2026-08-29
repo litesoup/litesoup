@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Backups now use zstd as the default compression** instead of gzip —
+  `database.sql.zst` (`wp db export - | zstd -8`) and `files.tar.zst`
+  (`tar cf - | zstd -1`). ~2x faster on SQL, ~12x faster on media with equal
+  or better ratios (benchmarked on sg10, 2026-08-29 — team-rd #17). Archives
+  are verified after creation (`zstd -t`, `CREATE TABLE` presence for DB).
+  `zstd` is installed during `install-stack.sh` (backup stage) and on-demand
+  by the backup/restore scripts. Restore/list handle the `.zst` format.
+  (`backup/lib/common.sh`, `backup/backup-site.sh`, `backup/backup-restore.sh`,
+  `backup/backup-list.sh`, `install/install-stack.sh`, `docs/backup.md`)
+
 ## [0.10.11] - 2026-08-25
 
 ### Fixed (issues #78, #79)
