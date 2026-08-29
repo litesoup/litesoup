@@ -117,6 +117,9 @@ main() {
   require_root
   validate
 
+  # Default compression is zstd — ensure the binary is present.
+  backup_require_zstd
+
   # Acquire lock — prevent concurrent runs for the same domain
   local lockfile="/var/lock/litesoup-backup-${DOMAIN}.lock"
   exec 200>"${lockfile}"
@@ -142,7 +145,7 @@ main() {
   local backup_base="/home/${SITE_USER}/backups/${DOMAIN}"
   local backup_dir="${backup_base}/${ts}"
   local files_archive="${backup_dir}/files"
-  local db_dump="${backup_dir}/database.sql"
+  local db_dump="${backup_dir}/database.sql.zst"
 
   if [ "${DRY_RUN}" != "1" ]; then
     mkdir -p "${backup_dir}"
@@ -170,6 +173,9 @@ backup_dump_db '${DOMAIN}' '${backup_dir}'
     }
     local db_elapsed=$(( $(date +%s) - db_ts ))
     log_info "backup: DB dump OK (${db_elapsed}s) for ${DOMAIN}"
+    if [ "${DRY_RUN}" != "1" ]; then
+      backup_verify_db "${db_dump}" || exit 1
+    fi
   fi
 
   # 4. Backup files
@@ -206,6 +212,9 @@ backup_archive '${docroot}' '${files_archive}'
     }
     local fs_elapsed=$(( $(date +%s) - fs_ts ))
     log_info "backup: file archive OK (${fs_elapsed}s) for ${DOMAIN}"
+    if [ "${DRY_RUN}" != "1" ]; then
+      backup_verify_archive "${files_archive}.tar.zst" || exit 1
+    fi
     rm -f "${exclude_file:-}"
   fi
 
@@ -229,10 +238,10 @@ backup_archive '${docroot}' '${files_archive}'
   if [ "${DEST}" = "s3" ] || [ "${DEST}" = "all" ]; then
     log_info "backup: uploading to S3..."
     if [ "${SKIP_DB}" != "1" ]; then
-      backup_s3_upload "${db_dump}" "${DOMAIN}/${ts}/database.sql" || log_warn "backup: S3 upload of database failed"
+      backup_s3_upload "${db_dump}" "${DOMAIN}/${ts}/database.sql.zst" || log_warn "backup: S3 upload of database failed"
     fi
     if [ "${SKIP_FILES}" != "1" ]; then
-      backup_s3_upload "${files_archive}.tar.gz" "${DOMAIN}/${ts}/files.tar.gz" || log_warn "backup: S3 upload of files failed"
+      backup_s3_upload "${files_archive}.tar.zst" "${DOMAIN}/${ts}/files.tar.zst" || log_warn "backup: S3 upload of files failed"
     fi
   fi
 

@@ -75,8 +75,8 @@ main() {
       local size
       size="$(backup_size_human "${backup_base}/${dir}" 2>/dev/null || echo "?")"
       local contents=""
-      [ -f "${backup_base}/${dir}/database.sql" ] && contents="${contents} DB"
-      [ -f "${backup_base}/${dir}/files.tar.gz" ] && contents="${contents} files"
+      [ -f "${backup_base}/${dir}/database.sql.zst" ] && contents="${contents} DB"
+      [ -f "${backup_base}/${dir}/files.tar.zst" ] && contents="${contents} files"
       [ -z "${contents}" ] && contents=" (empty)"
       printf '  %-22s %10s  %s\n' "${dir}" "${size}" "${contents}"
     done

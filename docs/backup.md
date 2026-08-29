@@ -28,6 +28,22 @@ sudo bash backup/backup-site.sh --domain=example.com --skip-files
 
 Each backup is stored at `/home/<user>/backups/<domain>/<timestamp>/`.
 
+## Compression (zstd default)
+
+Since v0.11.0, backups use **zstd** as the default compression instead of
+gzip — it is ~2x faster on SQL dumps and ~12x faster on media with equal or
+better ratios (benchmarked on sg10, 2026-08-29 — team-rd #17):
+
+| Artifact | Command | Output |
+|----------|---------|--------|
+| Database | `wp db export - \| zstd -8` | `database.sql.zst` |
+| Files     | `tar cf - \| zstd -1` | `files.tar.zst` |
+
+Archives are verified after creation (`zstd -t`, and `CREATE TABLE` presence
+for DB dumps). Restore transparently decompresses both formats. `zstd` is
+installed automatically during `install-stack.sh` (backup stage) and on-demand
+by the backup/restore scripts if missing.
+
 ## Restore from backup
 
 ```bash
@@ -219,7 +235,7 @@ litesoup uses `s3cmd` which works with any S3-compatible API:
   cannot read each other's backups
 - S3 credentials are stored in `/etc/litesoup/backup-s3.conf` (mode `0600`)
 - Database dumps are created via `wp db export`, inheriting WordPress's
-  database credentials (no hardcoded passwords)
+  database credentials (no hardcoded passwords), and compressed with zstd
 - Restore runs as root but drops to the site user for `wp db import`
 - Temp `.s3cfg` files (credential-bearing) are cleaned up after each S3
   operation; stale files older than 1 hour are purged automatically
