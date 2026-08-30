@@ -66,6 +66,61 @@ The restore script:
 3. Flushes WordPress and LiteSpeed caches
 4. Fixes file ownership
 
+## Full restore — `site-restore.sh`
+
+For production restore scenarios use `site/site-restore.sh`, the full-featured
+entrypoint (a superset of `backup-restore.sh`). It adds **S3 source**, a
+**`--target=new`** path that provisions a fresh app, **framework auto-detect**
+(WordPress vs Laravel), **git code restore**, and **post-restore self-verification**.
+
+```bash
+# Restore the newest local backup onto the running app (override)
+sudo bash site/site-restore.sh --domain=example.com
+
+# Restore a specific backup from S3 onto the running app
+sudo bash site/site-restore.sh --domain=example.com --source=s3 --from=2026-07-14_120000
+
+# Restore into a brand-new app (new domain + git code), search-replacing URLs
+sudo bash site/site-restore.sh --domain=example.com --target=new \
+  --new-domain=staging.example.com --git-repo=git@github.com:org/repo.git \
+  --tls=letsencrypt --email=ops@example.com
+
+# Preview everything without executing
+sudo bash site/site-restore.sh --domain=example.com --dry-run
+```
+
+Key options:
+
+| Flag | Meaning |
+|------|---------|
+| `--source=local\|s3` | Where backups live (default: `local`). `s3` downloads the newest (or `--from`) timestamp dir from S3 and verifies it. |
+| `--target=override\|new` | `override` restores onto the running app (DB + uploads/storage, safe pre-restore DB snapshot). `new` provisions a fresh app. |
+| `--domain=DOMAIN` | The source site's domain (for `override` this is the running app's domain). |
+| `--name=SLUG` / `--new-domain=DOMAIN` | For `--target=new`: new app slug + domain (defaults to `--domain`). |
+| `--framework=FRAMEWORK` | `wordpress\|laravel\|generic`. Auto-detected from the backup if omitted. |
+| `--git-repo=URL` / `--git-branch=B` | For `--target=new`: code source. With git, only data (uploads/storage) + DB are restored over the cloned code. Without git, the full files archive is extracted (excluding `wp-config.php`/`.env` so the fresh config survives). |
+| `--old-url=URL` | URL to search-replace from (default: `https://<source domain>` from `BACKUP_META`). |
+| `--php` / `--tier` / `--tls` / `--email` | For `--target=new`: passed through to `site-create.sh` / `site-import.sh`. |
+| `--build` | For `--target=new` Laravel: run `composer install` + `npm build`. |
+| `--skip-files` / `--skip-db` | Restore only the database or only the data files. |
+| `--dry-run` | List the backup + restore plan without executing. |
+
+Framework behaviour:
+
+- **WordPress** — restores `database.sql.zst` + `wp-content/uploads`; regenerates
+  `wp-config.php` with correct DB creds (via `site-import.sh` for `--target=new`);
+  search-replaces the domain with `wp-cli`; flushes caches.
+- **Laravel** — restores `database.sql.zst` + `storage/app`; writes a minimal
+  `.env` (preserving `APP_KEY`); search-replaces URLs across DB text columns;
+  optional `--build`.
+
+After restoring, `site-restore.sh` self-verifies: it counts tables in the
+database (must be > 0) and curls the origin URL (expects HTTP 2xx/3xx).
+
+For `--target=override`, the current database is snapshotted to
+`/var/backups/litesoup/pre-restore-<domain>-<timestamp>.sql.zst` **before** the
+destructive import so you can roll back if needed.
+
 ## List backups
 
 ```bash

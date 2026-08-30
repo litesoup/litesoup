@@ -136,3 +136,33 @@ backup_s3_list() {
 
   s3cmd --config="${cfg}" ls "s3://${S3_BUCKET}/${remote_prefix}" 2>/dev/null | awk '{print $1 "\t" $4}' || true
 }
+
+# backup_s3_download REMOTE_KEY LOCAL_PATH — download a file from S3.
+# REMOTE_KEY is the full object key INCLUDING S3_PREFIX (i.e. the KEY column
+# returned by backup_s3_list), e.g. "backups/example.com/2026-07-14_120000/database.sql.zst".
+# LOCAL_PATH is the destination file (parent dir must exist).
+backup_s3_download() {
+  local remote_key="${1:?backup_s3_download: remote_key required}"
+  local local_path="${2:?backup_s3_download: local_path required}"
+
+  backup_s3_ensure || return 1
+
+  # shellcheck disable=SC1090
+  source "${BACKUP_S3_CONF}"
+  local cfg
+  cfg="$(_backup_s3_cfg)"
+  # shellcheck disable=SC2064 # cfg expands at trap time intentionally
+  trap "_backup_s3_cleanup; rm -f '${cfg}'" RETURN
+
+  log_info "backup: downloading s3://${S3_BUCKET}/${remote_key} → ${local_path}"
+  if [ "${DRY_RUN}" = "1" ]; then
+    log_info "[DRYRUN] would s3cmd --config=${cfg} get s3://${S3_BUCKET}/${remote_key} ${local_path}"
+    return 0
+  fi
+
+  s3cmd --config="${cfg}" get "s3://${S3_BUCKET}/${remote_key}" "${local_path}" 2>/dev/null || {
+    log_error "backup: s3 download failed for ${remote_key}"
+    return 1
+  }
+  log_info "backup: download complete (${local_path})"
+}
