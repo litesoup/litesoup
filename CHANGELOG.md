@@ -6,6 +6,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- **`site/site-restore.sh` — full-featured restore entrypoint** (superset of
+  `backup/backup-restore.sh`). Restores a site's DB + data from a `backup-site.sh`
+  snapshot, sourced from **local disk or S3**, onto either the running app
+  (`--target=override`, with a safe pre-restore DB snapshot) or a freshly
+  provisioned app (`--target=new`, via `site-create.sh`/`site-import.sh`).
+  Supports **framework auto-detect** (WordPress vs Laravel), **git code restore**
+  (`--git-repo`/`--git-branch`), domain search-replace (`--old-url`),
+  `--php`/`--tier`/`--tls`/`--email` passthrough, `--dry-run`, and **post-restore
+  self-verification** (table count + origin HTTP 2xx/3xx). Adds
+  `backup_s3_download()` to `backup/lib/s3.sh` for S3 restore.
+  (`site/site-restore.sh`, `backup/lib/s3.sh`, `docs/backup.md`,
+  `test/bats/unit_site_restore.bats`)
+
 ### Changed
 
 - **Backups now use zstd as the default compression** instead of gzip —
