@@ -6,6 +6,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.10.12] - 2026-09-01
+
+### Fixed
+
+- **harden-ssh / ssh-guard no longer report "healthy" when an orphaned sshd
+  holds the SSH port** (sg11 incident 2026-09-01). A stale sshd detached from
+  systemd could keep the port bound while `ssh.service` was failed, resetting
+  every handshake — and the naive `ss -tlnp | grep sshd` check passed falsely
+  because the orphan *is* listening. `assert_ssh_healthy` now requires the
+  service be **active** AND the port be owned by its **MainPID** with **no
+  orphaned sshd**; the boot-time guard kills orphans, `reset-failed`s, and
+  restarts ssh when unhealthy. (`install/lib/common.sh`, `harden/ssh-guard.sh`,
+  `harden/harden-ssh.sh`)
+
 ### Changed
 
 - **Backups now use zstd as the default compression** instead of gzip —
