@@ -438,3 +438,58 @@ EOF
   grep -q 'SITE_USER_SHELL="${SITE_USER_SHELL:-/bin/bash}"' "${REPO_ROOT}/install/lib/users.sh"
   ! grep -q -- '--shell /usr/sbin/nologin' "${REPO_ROOT}/install/lib/users.sh"
 }
+
+# --- orphaned-sshd detection (sg11 incident 2026-09-01) ---
+# A stale sshd detached from systemd can hold the SSH port while ssh.service is
+# failed; a naive `ss | grep sshd` check passes falsely. assert_ssh_healthy must
+# require the port be owned by the service MainPID with no orphans.
+
+# Mock systemctl + ss on a temp PATH so the helpers shell out to our fixtures.
+make_ssh_mocks() {
+  local dir="$1" mainpid="$2" ss_line="$3"
+  mkdir -p "${dir}"
+  cat > "${dir}/systemctl" <<SH
+#!/usr/bin/env bash
+case "\$1" in
+  is-active) exit 0 ;;
+  show) printf '%s\n' "${mainpid}" ;;   # `show -p MainPID --value` emits bare PID
+  *) exit 0 ;;
+esac
+SH
+  cat > "${dir}/ss" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "${ss_line}"
+SH
+  chmod +x "${dir}/systemctl" "${dir}/ss"
+}
+
+@test "assert_ssh_healthy detects orphaned sshd holding the port (sg11 case)" {
+  local tmpdir
+  tmpdir="$(mktemp -d)"
+  # ssh.service active, MainPID=100, but port 2018 held by orphan PID 999.
+  make_ssh_mocks "${tmpdir}" "100" 'LISTEN 0 128 0.0.0.0:2018 users:(("sshd",pid=999,fd=3))'
+  PATH="${tmpdir}:${PATH}" run assert_ssh_healthy 2018 ssh
+  [ "${status}" -eq 1 ]
+  [[ "${output}" == *"NOT owned"* ]] || [[ "${output}" == *"orphaned"* ]]
+  rm -rf "${tmpdir}"
+}
+
+@test "assert_ssh_healthy passes when ssh.service MainPID owns the port" {
+  local tmpdir
+  tmpdir="$(mktemp -d)"
+  make_ssh_mocks "${tmpdir}" "100" 'LISTEN 0 128 0.0.0.0:2018 users:(("sshd",pid=100,fd=3))'
+  PATH="${tmpdir}:${PATH}" run assert_ssh_healthy 2018 ssh
+  [ "${status}" -eq 0 ]
+  rm -rf "${tmpdir}"
+}
+
+@test "sshd_orphans_on_port lists only PIDs that are not the MainPID" {
+  local tmpdir
+  tmpdir="$(mktemp -d)"
+  # Two listeners: MainPID 100 (healthy) + orphan 555 (should be reported).
+  make_ssh_mocks "${tmpdir}" "100" 'LISTEN 0 128 0.0.0.0:2018 users:(("sshd",pid=100,fd=3)) users:(("sshd",pid=555,fd=4))'
+  PATH="${tmpdir}:${PATH}" run sshd_orphans_on_port 2018 ssh
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "555" ]
+  rm -rf "${tmpdir}"
+}

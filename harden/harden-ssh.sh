@@ -377,16 +377,19 @@ EOF
       local i
       for i in 1 2 3 4 5 6; do
         sleep 2
-        if pgrep -x sshd >/dev/null 2>&1 && \
-           ss -tlnp 2>/dev/null | grep -qE ":${ssh_port}\b"; then
+        # Robust check (sg11 incident): service active AND port owned by the
+        # ssh.service MainPID with no orphaned sshd. A naive `pgrep sshd` +
+        # `ss | grep :port` passes falsely when an orphan holds the port while
+        # the service is failed — exactly the lockout we saw.
+        if assert_ssh_healthy "${ssh_port}" "ssh"; then
           poll_ok=1
           break
         fi
       done
       if [ "${poll_ok}" != "1" ]; then
-        # Distinguish timing issue (sshd process alive) from real failure.
-        if pgrep -x sshd >/dev/null 2>&1; then
-          log_warn "harden-ssh: sshd process alive but not yet listening on port ${ssh_port} after 12s"
+        # Distinguish timing issue (service active) from real failure.
+        if systemctl is-active --quiet ssh.service; then
+          log_warn "harden-ssh: ssh.service active but not healthy on port ${ssh_port} after 12s"
           log_warn "harden-ssh: this is likely a transient timing issue (busy system)"
           log_warn "harden-ssh: override written — will take effect on next sshd restart/reload"
           log_warn "harden-ssh: run 'systemctl reload ssh' if hardening is not active"
