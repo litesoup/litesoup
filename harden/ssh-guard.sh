@@ -43,21 +43,28 @@ main() {
     systemctl start ssh.service 2>/dev/null || true
   fi
 
-  # 3. Assert sshd is listening on the configured port.
+  # 3. Assert sshd is healthy on the configured port. Robust check (sg11
+  #    incident): the port must be owned by ssh.service's MainPID with NO
+  #    orphaned sshd. A naive `ss | grep sshd` passes falsely when an orphan
+  #    holds the port while the service is failed — exactly the lockout we saw.
   local ssh_port
   ssh_port="$(sshd -T 2>/dev/null | sed -n 's/^port //p' | tail -1)" || true
   ssh_port="${ssh_port:-22}"
 
-  if ss -tlnp 2>/dev/null | grep -qE ":${ssh_port}\\b.*sshd"; then
-    log_info "ssh-guard: sshd listening on configured port ${ssh_port}"
+  if assert_ssh_healthy "${ssh_port}" "ssh"; then
+    log_info "ssh-guard: ssh.service active and owns port ${ssh_port} (no orphans)"
     return 0
   fi
 
-  log_warn "ssh-guard: sshd NOT listening on configured port ${ssh_port} — restarting ssh"
+  # Unhealthy — kill any orphaned sshd holding the port, then restart cleanly.
+  log_warn "ssh-guard: SSH unhealthy on port ${ssh_port} — cleaning up orphaned sshd"
+  kill_orphans_on_port "${ssh_port}" "ssh"
+  systemctl reset-failed ssh.service 2>/dev/null || true
   systemctl restart ssh 2>/dev/null || true
   sleep 2
-  if ss -tlnp 2>/dev/null | grep -qE ":${ssh_port}\\b.*sshd"; then
-    log_info "ssh-guard: sshd listening on port ${ssh_port} after restart"
+
+  if assert_ssh_healthy "${ssh_port}" "ssh"; then
+    log_info "ssh-guard: ssh.service recovered on port ${ssh_port}"
   else
     log_error "ssh-guard: FAILED to bring sshd up on port ${ssh_port} — investigate"
   fi

@@ -37,6 +37,72 @@ require_root() {
   fi
 }
 
+# --- SSH orphaned-sshd detection helpers -----------------------------------
+# Guard against the "orphaned sshd holds the port while ssh.service is failed"
+# failure (sg11 incident 2026-09-01): a stale sshd detached from systemd keeps
+# the SSH port bound and resets every handshake, while `ss -tlnp | grep sshd`
+# still matches it — so naive "is something listening?" checks pass falsely.
+
+# ssh_service_mainpid [SVC] — echo the systemd MainPID of the ssh service ("" if none).
+ssh_service_mainpid() {
+  local svc="${1:-ssh}"
+  systemctl show "${svc}.service" -p MainPID --value 2>/dev/null || true
+}
+
+# sshd_orphans_on_port PORT [SVC] — echo PIDs listening on PORT that are NOT the
+# service MainPID (i.e. orphaned sshd). Empty output = no orphans.
+sshd_orphans_on_port() {
+  local port="$1" svc="${2:-ssh}" mainpid p
+  mainpid="$(ssh_service_mainpid "${svc}")"
+  for p in $(ss -tlnpH "sport = :${port}" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | sort -u); do
+    if [ -z "${mainpid}" ] || [ "${p}" != "${mainpid}" ]; then
+      printf '%s\n' "${p}"
+    fi
+  done
+}
+
+# assert_ssh_healthy PORT [SVC] — 0 if the service is active AND every listener on
+# PORT is the service MainPID (no orphans). Non-zero otherwise. Safe in `if`.
+assert_ssh_healthy() {
+  local port="$1" svc="${2:-ssh}" mainpid
+  if ! systemctl is-active --quiet "${svc}.service"; then
+    log_warn "ssh-guard: ${svc}.service is NOT active"
+    return 1
+  fi
+  mainpid="$(ssh_service_mainpid "${svc}")"
+  if [ -z "${mainpid}" ]; then
+    log_warn "ssh-guard: ${svc}.service has no MainPID"
+    return 1
+  fi
+  if ! ss -tlnpH "sport = :${port}" 2>/dev/null | grep -q "pid=${mainpid}"; then
+    log_warn "ssh-guard: port ${port} is NOT owned by ${svc}.service MainPID ${mainpid}"
+    return 1
+  fi
+  local orphans
+  orphans="$(sshd_orphans_on_port "${port}" "${svc}")"
+  if [ -n "${orphans}" ]; then
+    log_warn "ssh-guard: orphaned sshd on port ${port}: ${orphans//$'\n'/ }"
+    return 1
+  fi
+  return 0
+}
+
+# kill_orphans_on_port PORT [SVC] — SIGTERM then SIGKILL any sshd on PORT that is
+# not the service MainPID. Best-effort; never touches the healthy MainPID.
+kill_orphans_on_port() {
+  local port="$1" svc="${2:-ssh}" mainpid p
+  mainpid="$(ssh_service_mainpid "${svc}")"
+  for p in $(sshd_orphans_on_port "${port}" "${svc}"); do
+    log_warn "ssh-guard: killing orphaned sshd PID ${p} on port ${port}"
+    kill "${p}" 2>/dev/null || true
+    sleep 1
+    if kill -0 "${p}" 2>/dev/null; then
+      kill -9 "${p}" 2>/dev/null || true
+      sleep 1
+    fi
+  done
+}
+
 # Trap handler: print where we failed.
 _on_err() {
   local rc=$? line=${1:-?}
