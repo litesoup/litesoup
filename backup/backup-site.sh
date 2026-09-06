@@ -38,6 +38,10 @@ SKIP_FILES=0
 SKIP_DB=0
 KEEP=7
 EXCLUDE=()
+# Global (not local) so the EXIT trap can still reference it after main()
+# returns — a `local` goes out of scope and triggers "unbound variable"
+# under `set -u`, which broke every run (lockfile leaked + nonzero exit).
+LOCKFILE=""
 
 # ---- usage -----------------------------------------------------------------
 
@@ -120,14 +124,17 @@ main() {
   # Default compression is zstd — ensure the binary is present.
   backup_require_zstd
 
-  # Acquire lock — prevent concurrent runs for the same domain
-  local lockfile="/var/lock/litesoup-backup-${DOMAIN}.lock"
-  exec 200>"${lockfile}"
+  # Acquire lock — prevent concurrent runs for the same domain.
+  # LOCKFILE is a global (declared above) so the EXIT trap can still remove
+  # it after main() returns; a `local` here would be unset by trap time and
+  # `set -u` would abort the trap, leaking the lock + failing the run.
+  LOCKFILE="/var/lock/litesoup-backup-${DOMAIN}.lock"
+  exec 200>"${LOCKFILE}"
   flock -n 200 || {
     log_error "backup: another backup is already running for ${DOMAIN} — skipping"
     exit 0
   }
-  trap 'rm -f "${lockfile}"; exit' EXIT INT TERM
+  trap 'rm -f "${LOCKFILE}"; exit' EXIT INT TERM
 
   local ts_start
   ts_start="$(date +%s)"
