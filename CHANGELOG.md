@@ -6,6 +6,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.10.13] - 2026-09-06
+
+### Fixed
+
+- **Weekly backup timer no longer fails every run with `lockfile: unbound
+  variable`** — `backup-site.sh`'s EXIT trap referenced `${lockfile}`, a `local`
+  inside `main()`. Once `main` returned normally, the variable was out of scope;
+  under `set -u` the trap aborted with "unbound variable", so the lockfile was
+  never removed (leaked in `/var/lock/`) and the script exited nonzero even on a
+  successful backup — the systemd timer saw failure every week. The lockfile
+  path is now a module-level global (`LOCKFILE`), so the trap can still remove
+  it after `main` returns. (`backup/backup-site.sh`)
+
 ## [0.10.12] - 2026-09-01
 
 ### Fixed
