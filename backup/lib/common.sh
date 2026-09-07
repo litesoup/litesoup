@@ -28,6 +28,8 @@ LITESOUP_BACKUP_COMMON_SH=1
 source "${REPO_ROOT}/install/lib/common.sh"
 # shellcheck source=../../install/lib/notify.sh
 source "${REPO_ROOT}/install/lib/notify.sh"
+# shellcheck source=../../install/lib/apt.sh
+source "${REPO_ROOT}/install/lib/apt.sh"
 
 # Root is required for all backup operations (file ownership, DB access).
 # Call require_root at the start of each backup script's main() — we
@@ -112,7 +114,7 @@ backup_archive() {
 
   local exclude_opts=()
   if [ -f "${REPO_ROOT}/backup/backup-exclude-global.txt" ]; then
-    while IFS= read -r line; do
+    while IFS= read -r line || [ -n "${line}" ]; do
       # Skip blank lines and comments
       case "${line}" in
         ''|\#*) continue ;;

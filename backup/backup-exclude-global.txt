@@ -1,0 +1,14 @@
+# backup-exclude-global.txt — paths excluded from EVERY site file archive.
+# Read by backup/lib/common.sh backup_archive(): each non-blank, non-# line
+# becomes a `tar --exclude=<line>` pattern (matched against the archive root,
+# i.e. the site docroot; a pattern without '/' matches basenames at any depth).
+#
+# These are regenerable runtime artifacts — excluding them keeps the archive
+# stable and avoids "file changed as we read it" failures (tar exit 1 under
+# pipefail) when a cache is actively written while the backup runs.
+#
+# W3TC page/object cache + config (regenerable on next request/cache warm):
+wp-content/cache
+wp-content/object-cache.php
+wp-content/advanced-cache.php
+wp-content/w3tc-config

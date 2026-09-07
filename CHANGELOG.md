@@ -6,6 +6,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.10.14] - 2026-09-07
+
+### Fixed
+
+- **Backup auto-install hook no longer fails with `ensure_pkgs: command not found`**
+  (vn14 incident 2026-09-07). `backup/lib/common.sh` sourced only
+  `install/lib/common.sh` + `notify.sh`, but `ensure_pkgs` lives in
+  `install/lib/apt.sh` — so when s3cmd (or zstd) was missing, the backup
+  crashed instead of auto-installing it. `common.sh` now sources `apt.sh`, and
+  `backup-install.sh` deploys `apt.sh` alongside `notify.sh`. (`backup/lib/common.sh`,
+  `backup/backup-install.sh`)
+- **File archive no longer fails with `file changed as we read it` (tar exit 1)
+  when a page cache is actively written** (vn14 incident 2026-09-07). New
+  `backup/backup-exclude-global.txt` excludes regenerable W3TC runtime
+  (`wp-content/cache`, `object-cache.php`, `advanced-cache.php`, `w3tc-config`);
+  `backup-install.sh` deploys it. Also hardened the exclude-file reader to
+  process the final line even when the file lacks a trailing newline
+  (`while read ... || [ -n "$line" ]`) — a bare `while read` silently dropped
+  the last pattern. (`backup/backup-exclude-global.txt`, `backup/lib/common.sh`,
+  `backup/backup-install.sh`)
+
 ## [0.10.13] - 2026-09-06
 
 ### Fixed

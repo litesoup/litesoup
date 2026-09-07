@@ -141,7 +141,9 @@ S3EOF
       for f in "${REPO_ROOT}/backup/lib/"*.sh; do
         run_or_dryrun install -m 0644 "${f}" "${backup_dst}/lib/"
       done
+      run_or_dryrun install -m 0644 "${REPO_ROOT}/backup/backup-exclude-global.txt" "${backup_dst}/backup-exclude-global.txt"
       run_or_dryrun install -m 0644 "${REPO_ROOT}/install/lib/notify.sh" "${LITESOUP_LIB}/install/lib/"
+      run_or_dryrun install -m 0644 "${REPO_ROOT}/install/lib/apt.sh" "${LITESOUP_LIB}/install/lib/"
     fi
   fi
 
