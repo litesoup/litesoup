@@ -263,6 +263,12 @@ main() {
 
   if [ "${skip_hardening}" = "1" ]; then
     log_info "litesoup install-stack: hardening stages skipped via --skip-hardening"
+    # fail2ban + wp-login jail STILL installed even with --skip-hardening, so
+    # every new box gets wp-login brute-force protection (Khôi's standing rule,
+    # 2026-09). --skip-hardening now only skips ssh/firewall/upgrades/apache/php
+    # hardening, not fail2ban.
+    log_info "stage 13/${total_stages}: harden-fail2ban (sshd/apache-auth/apache-badbots/wp-login jails)"
+    run_or_dryrun bash "${SCRIPT_DIR}/../harden/harden-fail2ban.sh"
   else
     # Hardening stages must run AFTER services are up: harden-fail2ban watches
     # /var/log/apache2/*error.log which only exists once Apache is installed
@@ -334,6 +340,16 @@ main() {
     log_info "  [dry-run] would copy templates/ → ${litesoup_lib}/templates/"
   fi
   run_or_dryrun install -m 0644 "${repo_root}/VERSION" "${litesoup_lib}/VERSION"
+
+  # Install the wp-cron runner + its dirs (used by site-create.sh's staggered
+  # system cron). Lives at /opt/litesoup/wp-cron-runner.sh; the per-site cron
+  # lines reference this path.
+  if [ -f "${repo_root}/install/wp-cron-runner.sh" ]; then
+    run_or_dryrun install -d -m 0755 /opt/litesoup
+    run_or_dryrun install -m 0755 "${repo_root}/install/wp-cron-runner.sh" /opt/litesoup/wp-cron-runner.sh
+    run_or_dryrun mkdir -p /var/log/wp-cron /run/locks
+    run_or_dryrun chown "${DEFAULT_SITE_USER}:${DEFAULT_SITE_USER}" /var/log/wp-cron /run/locks
+  fi
 
   # Enable the 000-default catch-all vhost (serves 404 for IP/direct access).
   # Prevents fallback to the alphabetically-first named site when no

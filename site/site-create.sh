@@ -466,6 +466,65 @@ setup_generic() {
   log_info "site-create: generic framework -- no setup needed"
 }
 
+# ── System wp-cron ─────────────────────────────────────────────────────────
+# Called for --framework=wordpress. Sets DISABLE_WP_CRON=true (so the site stops
+# self-looping wp-cron.php) and registers a STAGGERED system cron entry that runs
+# due events every 30 min via /opt/litesoup/wp-cron-runner.sh. Each site gets a
+# distinct minute slot so all sites never fire at the same instant.
+# Only applies to the default litesoup user (the runner assumes that webroot);
+# custom --user sites get DISABLE_WP_CRON but no cron entry.
+enable_system_wp_cron() {
+  [ "${FRAMEWORK}" = "wordpress" ] || return 0
+  if [ "${DRY_RUN}" = "1" ]; then
+    log_info "[DRYRUN] would set DISABLE_WP_CRON=true and add staggered cron for ${SITE_NAME}"
+    return 0
+  fi
+  # 1. DISABLE_WP_CRON=true as a REAL boolean (--raw; WP compares strictly, so a
+  #    quoted 'true' string would NOT disable wp-cron).
+  sudo -H -u "${SITE_USER}" wp --path="${DOCROOT}" config set DISABLE_WP_CRON true \
+    --type=constant --raw >/dev/null 2>&1 \
+    || log_warn "site-create: could not set DISABLE_WP_CRON for ${SITE_NAME}"
+  if sudo -H -u "${SITE_USER}" wp --path="${DOCROOT}" eval 'var_dump(DISABLE_WP_CRON);' 2>/dev/null | grep -q "bool(true)"; then
+    log_info "site-create: DISABLE_WP_CRON=true active for ${SITE_NAME}"
+  else
+    log_warn "site-create: DISABLE_WP_CRON not active for ${SITE_NAME} — verify manually"
+  fi
+
+  # 2. Cron entry only for the default user (runner path assumes litesoup webroot).
+  if [ "${SITE_USER}" != "${DEFAULT_SITE_USER}" ]; then
+    log_warn "site-create: skipping system cron for ${SITE_NAME} (owner ${SITE_USER} != ${DEFAULT_SITE_USER}); add a cron manually"
+    return 0
+  fi
+  local runner=/opt/litesoup/wp-cron-runner.sh
+  if [ ! -x "${runner}" ]; then
+    mkdir -p /var/log/wp-cron /run/locks
+    chown "${DEFAULT_SITE_USER}:${DEFAULT_SITE_USER}" /var/log/wp-cron /run/locks
+    install -m 0755 "${REPO_ROOT}/install/wp-cron-runner.sh" "${runner}" \
+      || log_warn "site-create: could not install wp-cron runner"
+  fi
+  # Pick the next free staggered minute slot (avoid colliding with existing sites).
+  local -a used=()
+  local line m slot u
+  while IFS= read -r line; do
+    [[ "${line}" == *"wp-cron-runner.sh"* ]] || continue
+    m="${line%% *}"
+    used+=("${m%%,*}")
+  done < <(crontab -u "${DEFAULT_SITE_USER}" -l 2>/dev/null || true)
+  local chosen=""
+  for slot in 0 3 6 9 12 15 18 21 24 27; do
+    local taken=0
+    for u in "${used[@]}"; do [ "${u}" = "${slot}" ] && taken=1; done
+    if [ "${taken}" = "0" ]; then chosen="${slot}"; break; fi
+  done
+  [ -n "${chosen}" ] || chosen="$(( RANDOM % 30 ))"
+  local cron_line="${chosen},$((chosen+30)) * * * * ${runner} ${SITE_NAME}"
+  {
+    crontab -u "${DEFAULT_SITE_USER}" -l 2>/dev/null | grep -v "wp-cron-runner.sh ${SITE_NAME}"
+    printf '%s\n' "${cron_line}"
+  } | crontab -u "${DEFAULT_SITE_USER}" -
+  log_info "site-create: added system wp-cron for ${SITE_NAME} → '${cron_line}'"
+}
+
 main() {
   parse_args "$@"
   require_root
@@ -500,6 +559,8 @@ main() {
       *)       download_wordpress ;;
     esac
   fi
+
+  enable_system_wp_cron
 
   local scheme="http"
   [ "${TLS_MODE}" != "none" ] && scheme="https"

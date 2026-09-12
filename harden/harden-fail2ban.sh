@@ -52,11 +52,13 @@ Options:
   --dry-run   Print actions without executing
   --help      Show this help
 
-Installs fail2ban (if missing) and writes three managed jails under
+Installs fail2ban (if missing) and writes four managed jails under
 /etc/fail2ban/jail.d/:
   - litesoup-sshd.local         [sshd] — systemd backend, 3 retries / 1h ban
   - litesoup-apache-auth.local  [apache-auth] — apache2 error logs, 5 retries
   - litesoup-apache-badbots.local  [apache-badbots] — scanner user agents, 1 hit / 7d ban
+  - litesoup-wp-login.local     [wp-login] — /wp-login.php brute-force in access
+    logs (catches 200/302 that apache-auth misses), 8 retries / 4h ban
 
 The apache-auth jail is skipped (with a warning) if /var/log/apache2/ is
 absent (Apache not installed).
@@ -181,6 +183,41 @@ EOF
 )"
     local BADBOTS_JAIL="${JAIL_DIR}/litesoup-apache-badbots.local"
     write_jail_if_changed "${BADBOTS_JAIL}" "${badbots_content}"$'\n'
+
+    # 3c. wp-login jail — catches wp-login.php brute-force that returns
+    #     200/302. The stock apache-auth jail only sees 401/403 auth failures
+    #     (error log), so it is BLIND to wp-login brute-force; this jail matches
+    #     the access log instead. Managed filter + jail, idempotent.
+    local WP_LOGIN_FILTER="/etc/fail2ban/filter.d/litesoup-wp-login.conf"
+    local wp_login_filter_content
+    wp_login_filter_content="$(cat <<'EOF'
+# /etc/fail2ban/filter.d/litesoup-wp-login.conf — managed by litesoup harden-fail2ban.sh.
+# Matches any GET/POST to /wp-login.php in the Apache combined access log.
+# Catches wp-login brute-force even when it returns 200/302 (not just 401/403).
+[Definition]
+failregex = ^<HOST> -.*"(?:GET|POST) /wp-login\.php
+ignoreregex =
+EOF
+)"
+    write_jail_if_changed "${WP_LOGIN_FILTER}" "${wp_login_filter_content}"$'\n'
+
+    local WP_LOGIN_JAIL="${JAIL_DIR}/litesoup-wp-login.local"
+    local wp_login_content
+    wp_login_content="$(cat <<'EOF'
+# /etc/fail2ban/jail.d/litesoup-wp-login.local — managed by litesoup harden-fail2ban.sh.
+# Re-running harden-fail2ban.sh may overwrite this file.
+[wp-login]
+enabled = true
+port = http,https
+filter = litesoup-wp-login
+logpath = /var/log/apache2/*-ssl-access.log
+maxretry = 8
+findtime = 600
+bantime = 14400
+action = iptables-allports
+EOF
+)"
+    write_jail_if_changed "${WP_LOGIN_JAIL}" "${wp_login_content}"$'\n'
   else
     apache_skipped=1
     log_warn "fail2ban: ${APACHE_LOG_DIR} not found — skipping apache-auth jail (Apache not installed?)"
@@ -199,7 +236,7 @@ EOF
   # 6. Smoke tests + final status (skipped in dry-run).
   if [ "${DRY_RUN}" = "1" ]; then
     log_info "[DRYRUN] would run: fail2ban-client status sshd"
-    [ "${apache_skipped}" = "0" ] && log_info "[DRYRUN] would run: fail2ban-client status apache-auth" && log_info "[DRYRUN] would run: fail2ban-client status apache-badbots"
+    [ "${apache_skipped}" = "0" ] && log_info "[DRYRUN] would run: fail2ban-client status apache-auth" && log_info "[DRYRUN] would run: fail2ban-client status apache-badbots" && log_info "[DRYRUN] would run: fail2ban-client status wp-login"
     log_info "[DRYRUN] would run: fail2ban-client status"
     return 0
   fi
@@ -230,6 +267,11 @@ EOF
       exit 1
     fi
     log_info "fail2ban: apache-badbots jail loaded"
+    if ! fail2ban-client status wp-login; then
+      log_error "fail2ban: wp-login jail failed to load"
+      exit 1
+    fi
+    log_info "fail2ban: wp-login jail loaded"
   fi
 
   fail2ban-client status
