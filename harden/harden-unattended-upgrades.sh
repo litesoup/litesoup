@@ -11,6 +11,12 @@ source "${SCRIPT_DIR}/../install/lib/common.sh"
 UU_OVERRIDE_FILE="/etc/apt/apt.conf.d/52litesoup-unattended"
 UU_PERIODIC_FILE="/etc/apt/apt.conf.d/20auto-upgrades"
 
+# Seconds to allow the stage-5 dry-run smoke test. `unattended-upgrade --dry-run
+# --debug` computes the full upgrade plan before printing, so on hosts with a big
+# backlog it can run for many minutes. Override with UU_SMOKE_TIMEOUT=0 to skip
+# the dry-run entirely (config assertions still run).
+: "${UU_SMOKE_TIMEOUT:=60}"
+
 usage() {
   cat <<'EOF'
 litesoup harden-unattended-upgrades — enable security-only auto-updates
@@ -137,12 +143,42 @@ EOF
 
   log_info "stage 5/5: smoke test"
   if [ "${DRY_RUN}" = "1" ]; then
-    log_info "[DRYRUN] would run: unattended-upgrade --dry-run --debug | head -20"
+    log_info "[DRYRUN] would run: timeout ${UU_SMOKE_TIMEOUT}s unattended-upgrade --dry-run --debug"
     log_info "[DRYRUN] would print: systemctl is-enabled unattended-upgrades.service"
   else
-    log_info "unattended-upgrade --dry-run --debug (first 20 lines):"
-    unattended-upgrade --dry-run --debug 2>&1 | head -20 || true
+    # Bound the smoke test. `unattended-upgrade --dry-run --debug` computes the
+    # ENTIRE upgrade plan before printing anything: on a host with several hundred
+    # pending packages it burns 70-99% CPU for many minutes and never returns, so
+    # piping into `head` (which cannot interrupt it) blocked this whole script.
+    # A timeout here is a WARNING, not a failure - stages 1-4 already wrote the config.
+    local smoke_log smoke_rc=0
+    smoke_log="$(mktemp)"
+    if [ "${UU_SMOKE_TIMEOUT}" = "0" ]; then
+      log_info "smoke test skipped (UU_SMOKE_TIMEOUT=0)"
+    else
+      # NOTE: `timeout 0` means "no limit" in coreutils, so the 0 case is handled above.
+      timeout "${UU_SMOKE_TIMEOUT}" unattended-upgrade --dry-run --debug >"${smoke_log}" 2>&1 || smoke_rc=$?
+
+      if [ "${smoke_rc}" = "124" ]; then
+        log_warn "smoke test exceeded ${UU_SMOKE_TIMEOUT}s and was killed (host has a large upgrade backlog)."
+        log_warn "This does NOT affect the config written in stages 2-3; verify manually with:"
+        log_warn "  apt-config dump | grep -A3 Allowed-Origins"
+      else
+        log_info "unattended-upgrade --dry-run --debug (first 20 lines, rc=${smoke_rc}):"
+        head -20 "${smoke_log}" || true
+      fi
+    fi
+
+    # Cheap, always-fast assertions on the config we just wrote.
+    # NOTE: `apt-config dump` keeps the ${distro_codename} placeholder literally - it
+    # never prints "noble-security". Assert on the generated file instead.
+    if grep -q '\-security' "${UU_OVERRIDE_FILE}" 2>/dev/null; then
+      log_info "allowed-origins: -security origin present in ${UU_OVERRIDE_FILE}"
+    else
+      log_warn "allowed-origins: no -security origin in ${UU_OVERRIDE_FILE} - check that file"
+    fi
     log_info "is-enabled: $(systemctl is-enabled unattended-upgrades.service 2>&1 || true)"
+    rm -f "${smoke_log}"
   fi
 
   log_info "litesoup harden-unattended-upgrades: COMPLETE"
