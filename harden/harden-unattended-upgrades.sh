@@ -17,6 +17,10 @@ UU_PERIODIC_FILE="/etc/apt/apt.conf.d/20auto-upgrades"
 # the dry-run entirely (config assertions still run).
 : "${UU_SMOKE_TIMEOUT:=60}"
 
+# Seconds to wait for an in-flight `unattended-upgrade` to release the dpkg lock
+# before giving up (see stage 4b). It can be downloading a large backlog.
+: "${UU_DRAIN_TIMEOUT:=180}"
+
 usage() {
   cat <<'EOF'
 litesoup harden-unattended-upgrades — enable security-only auto-updates
@@ -139,6 +143,30 @@ EOF
   run_or_dryrun systemctl enable --now unattended-upgrades.service
   if [ "${changed}" = "1" ]; then
     run_or_dryrun systemctl restart unattended-upgrades.service
+  fi
+
+  # The apt-daily-upgrade.timer can fire the moment periodic upgrades are enabled,
+  # and `unattended-upgrade` then grabs /var/lib/dpkg/lock-frontend for many minutes
+  # (it --download-only's the whole backlog). A caller that runs `apt-get` right
+  # after this script then dies with rc=100 "Could not get lock".
+  # Stop the timer, and wait for any in-flight UU to finish, so the caller starts clean.
+  if [ "${DRY_RUN}" != "1" ]; then
+    log_info "stage 4b/5: quiesce unattended-upgrades so the caller's apt-get is not blocked"
+    systemctl stop apt-daily-upgrade.timer apt-daily.timer 2>/dev/null || true
+    local waited=0
+    while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+      if [ "${waited}" -ge "${UU_DRAIN_TIMEOUT}" ]; then
+        log_warn "dpkg lock still held after ${UU_DRAIN_TIMEOUT}s by: $(fuser /var/lib/dpkg/lock-frontend 2>&1 | tr -s ' ')"
+        log_warn "A caller running apt-get now WILL fail with 'Could not get lock'. Wait for it, or:"
+        log_warn "  pkill -f 'unattended-upgrade --download-only'   # only if it is spinning, not downloading"
+        break
+      fi
+      sleep 5
+      waited=$((waited + 5))
+    done
+    [ "${waited}" -lt "${UU_DRAIN_TIMEOUT}" ] && log_info "dpkg lock free (waited ${waited}s)"
+    # Re-arm the timers; they are enabled by default and we only stopped them transiently.
+    systemctl start apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
   fi
 
   log_info "stage 5/5: smoke test"
