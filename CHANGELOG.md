@@ -6,6 +6,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Fixed
+
+- **`cloudflare-realip.conf` was generated with the last IPv4 range glued onto the
+  first IPv6 range.** Both `cloudflare.com/ips-v4|v6` endpoints return a body with no
+  trailing newline, so piping them back-to-back produced
+  `RemoteIPTrustedProxy 131.0.72.0/22RemoteIPTrustedProxy 2400:cb00::/32`.
+  `apache2ctl configtest` then failed (`RemoteIP: Error parsing IP`) and — because the
+  reload was gated behind the test — the module appeared enabled while the config was
+  never loaded. Added an explicit `echo` after each fetch plus `tr -d '\r'`. Caught on
+  sg14 during the fleet-wide mod_remoteip rollout. (`install/lib/apache.sh`)
+
 ### Added
 
 - **Cloudflare real-IP support on install (`mod_remoteip`).** `install/lib/apache.sh`

@@ -49,11 +49,17 @@ ensure_cloudflare_realip() {
     echo "# litesoup: Cloudflare real-IP (mod_remoteip). Managed — do not edit by hand."
     echo "RemoteIPHeader CF-Connecting-IP"
     # IPv4 ranges from https://www.cloudflare.com/ips-v4 (refreshed at install)
-    curl -fsS https://www.cloudflare.com/ips-v4 2>/dev/null \
+    # NOTE: both endpoints return a body with NO trailing newline. Without the
+    # explicit `echo` the last v4 range glues onto the first v6 line
+    # ("RemoteIPTrustedProxy 131.0.72.0/22RemoteIPTrustedProxy 2400:cb00::/32")
+    # and apache2ctl configtest fails with "Error parsing IP". Caught on sg14.
+    curl -fsS https://www.cloudflare.com/ips-v4 2>/dev/null | tr -d '\r' \
       | sed '/^$/d; s|^|RemoteIPTrustedProxy |'
+    echo
     # IPv6 ranges from https://www.cloudflare.com/ips-v6
-    curl -fsS https://www.cloudflare.com/ips-v6 2>/dev/null \
+    curl -fsS https://www.cloudflare.com/ips-v6 2>/dev/null | tr -d '\r' \
       | sed '/^$/d; s|^|RemoteIPTrustedProxy |'
+    echo
   } > "${tmp}"
 
   # If the fetch produced no trusted-proxy lines (curl failed/offline), use the
