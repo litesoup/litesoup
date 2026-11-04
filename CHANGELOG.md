@@ -8,6 +8,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- **`install-stack.sh` enabled the `000-default.conf` catch-all but never reloaded
+  Apache, leaving port 443 serving PLAIN HTTP.** `a2ensite 000-default.conf` only
+  drops the `sites-enabled` symlink; without a reload the `_default_:443` vhost never
+  takes effect, so every `https://` request failed with `curl: (35) ... wrong version
+  number` (HTTP `000`) while `http://` worked — and `ss -tlnp` still showed Apache
+  listening on `*:443` with `a2query -m ssl` reporting `enabled`, so the box looked
+  healthy. Stage 17 now runs `ensure_pkgs ssl-cert` **before** `a2ensite` (the vhost
+  references the snakeoil cert, so configtest would fail otherwise), then
+  `apache2ctl configtest` → `systemctl reload apache2` → a local
+  `curl -sk https://127.0.0.1/` probe that logs an error if the code is still `000`.
+  Caught on vn19 (2026-11) during a fresh install. (`install/install-stack.sh`)
 - **`cloudflare-realip.conf` was generated with the last IPv4 range glued onto the
   first IPv6 range.** Both `cloudflare.com/ips-v4|v6` endpoints return a body with no
   trailing newline, so piping them back-to-back produced

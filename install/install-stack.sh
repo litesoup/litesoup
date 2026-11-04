@@ -354,17 +354,44 @@ main() {
   # Enable the 000-default catch-all vhost (serves 404 for IP/direct access).
   # Prevents fallback to the alphabetically-first named site when no
   # ServerName matches.
+  #
+  # ORDER MATTERS: `ssl-cert` (snakeoil cert) must be installed BEFORE a2ensite,
+  # because 000-default.conf references the snakeoil files in its `_default_:443`
+  # block and `apache2ctl configtest` fails when they are missing.
+  run_or_dryrun ensure_pkgs ssl-cert
+
   if [ -f "${repo_root}/templates/apache/000-default.conf.tmpl" ]; then
     run_or_dryrun install -m 0644 \
       "${repo_root}/templates/apache/000-default.conf.tmpl" \
       "/etc/apache2/sites-available/000-default.conf"
     run_or_dryrun a2ensite 000-default.conf 2>/dev/null || true
+
+    # 🔴 a2ensite only drops the sites-enabled symlink — Apache keeps serving the
+    # OLD config until it is reloaded. Without the reload the `_default_:443`
+    # block never takes effect, so port 443 serves PLAIN HTTP and every https://
+    # request fails with `curl: (35) ... wrong version number` (HTTP 000) while
+    # `ss -tlnp` still shows Apache listening on *:443 and `a2query -m ssl` is
+    # `enabled` — so it looks healthy. Caught on vn19 (2026-11) right after a
+    # fresh install.
+    if [ "${DRY_RUN:-0}" != "1" ]; then
+      if apache2ctl configtest 2>/dev/null; then
+        systemctl reload apache2
+        # Prove TLS answers locally: 000 means the reload did not take effect.
+        # Report only — a landing-page hiccup must not abort the install.
+        # (curl still writes %{http_code} on a TLS error, so don't append a
+        # fallback value — that would yield "000000".)
+        local _https_code
+        _https_code="$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 https://127.0.0.1/ 2>/dev/null || true)"
+        if [ -z "${_https_code}" ] || [ "${_https_code}" = "000" ]; then
+          log_error "apache: https://127.0.0.1/ returned ${_https_code:-000} after reload — TLS catch-all NOT active"
+        else
+          log_info "apache: reloaded — HTTPS catch-all answering (${_https_code})"
+        fi
+      else
+        log_error "apache configtest failed after enabling 000-default.conf — NOT reloading"
+      fi
+    fi
   fi
-  # Ensure SSL snakeoil cert exists for the default vhost's port 443 catch-all.
-  # Any domain pointed at this server without its own site gets the LiteSoup
-  # landing page over HTTPS (with a browser 'Not Secure' warning) instead of
-  # falling through to another site's cert.
-  run_or_dryrun ensure_pkgs ssl-cert
 
   # Install the landing page served by the default vhost (direct IP access).
   if [ -f "${repo_root}/templates/apache/default-index.html" ]; then
