@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         systemd systemd-sysv dbus \
         ca-certificates curl wget gnupg sudo lsb-release \
         software-properties-common iproute2 procps \
-        openssh-server \
+        openssh-server cron \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # openssh-server is REQUIRED, not incidental: install-stack runs harden-ssh.sh,

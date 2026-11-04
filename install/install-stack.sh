@@ -96,7 +96,15 @@ verify_ssh_access() {
   #    prevents a reboot/package upgrade from re-enabling it. An enabled-but-
   #    inactive socket is exactly the pre-reboot state that caused the lockout.
   local sock_state
-  sock_state="$(systemctl is-enabled ssh.socket 2>/dev/null || echo unknown)"
+  # 🔴 `systemctl is-enabled` prints its state AND exits non-zero for units that
+  # are not plain "enabled" — including "masked". So `$(... || echo unknown)`
+  # captures BOTH lines ("masked\nunknown"), the `!= masked` test below then
+  # always fails, and verify_ssh_access wrongly refuses to declare the install
+  # complete (stage 17, caught 2026-11). Capture the first line only.
+  # `|| true` is required: under `set -o pipefail` the pipeline inherits
+  # systemctl's non-zero status and the ERR trap would abort the install.
+  sock_state="$(systemctl is-enabled ssh.socket 2>/dev/null | head -1 || true)"
+  [ -n "${sock_state}" ] || sock_state=unknown
   if systemctl is-active ssh.socket >/dev/null 2>&1; then
     log_error "verify-ssh: ssh.socket is ACTIVE — it binds the default port regardless of the Port directive"
     problems=1

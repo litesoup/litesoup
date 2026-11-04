@@ -209,7 +209,15 @@ main() {
   #    alone would miss it. Runs on EVERY invocation; masking is idempotent.
   if [ "${DRY_RUN}" != "1" ]; then
     local sock_state
-    sock_state="$(systemctl is-enabled ssh.socket 2>/dev/null || echo unknown)"
+    # 🔴 `systemctl is-enabled` prints its state AND exits non-zero for units that
+    # are not plain "enabled" — including "masked". So `$(... || echo unknown)`
+    # captures BOTH lines ("masked\nunknown"), the `!= masked` test below then
+    # misfires, and the script needlessly re-does the socket transition. Capture
+    # the first line only. (Same bug in install-stack.sh's verify_ssh_access.)
+    # `|| true` is required: under `set -o pipefail` the pipeline inherits
+    # systemctl's non-zero status and the ERR trap would abort the script.
+    sock_state="$(systemctl is-enabled ssh.socket 2>/dev/null | head -1 || true)"
+    [ -n "${sock_state}" ] || sock_state=unknown
     if [ "${sock_state}" != "masked" ]; then
       log_warn "harden-ssh: ssh.socket is '${sock_state}' (Ubuntu 24.04 socket-activated SSH)"
       log_warn "harden-ssh:    it binds the default port regardless of the Port directive."
