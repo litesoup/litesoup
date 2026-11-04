@@ -10,7 +10,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         systemd systemd-sysv dbus \
         ca-certificates curl wget gnupg sudo lsb-release \
         software-properties-common iproute2 procps \
+        openssh-server \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# openssh-server is REQUIRED, not incidental: install-stack runs harden-ssh.sh,
+# which writes /etc/ssh/sshd_config.d/52-litesoup-harden.conf and exits 1 when
+# that drop-in dir is missing ("is openssh-server installed?"). Real boxes always
+# have it (it is how the operator is connected), so leaving it out of the image
+# made the container diverge from production and harden-ssh fail at stage 11 —
+# which the integration harness then silently swallowed (see run-integration.sh).
 
 # Strip systemd units that fight with containers
 RUN find /lib/systemd/system/sysinit.target.wants -type l ! -name 'systemd-tmpfiles-setup*' -delete \

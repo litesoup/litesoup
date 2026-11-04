@@ -8,6 +8,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- **The CI integration harness swallowed every failure — jobs reported SUCCESS
+  while their log said `=== FAILED in 01_install_stack.sh (exit 0) ===`.**
+  `test/docker/run-integration.sh` captured the status as
+  `if ! docker exec ...; then EXIT=$?` — but inside the body of `if ! cmd`, `$?`
+  is the status of the *negation* (always 0 when the branch is taken), so `EXIT`
+  was always 0. Every integration job from 2026-08-14 onward was green-but-broken;
+  the suite had not actually passed since ~2026-08-03. Now uses
+  `cmd || rc=$?` and exits non-zero. (`test/docker/run-integration.sh`)
+
+- **The integration test image was missing `openssh-server`, so `harden-ssh.sh`
+  failed at stage 11 on every run.** `install-stack.sh` runs `harden-ssh.sh`,
+  which exits 1 when `/etc/ssh/sshd_config.d` is absent
+  (`is openssh-server installed?`). Real boxes always have it — it is how the
+  operator connects — so the container diverged from production. Added
+  `openssh-server` to `test/docker/Dockerfile.ubuntu2404-systemd`, which also
+  un-masks the failure the harness had been hiding.
+
 - **`install-stack.sh` enabled the `000-default.conf` catch-all but never reloaded
   Apache, leaving port 443 serving PLAIN HTTP.** `a2ensite 000-default.conf` only
   drops the `sites-enabled` symlink; without a reload the `_default_:443` vhost never
