@@ -79,11 +79,19 @@ done
 # Execute each integration script inside the SAME container in order. Stop
 # at the first failure so a broken stage doesn't mask later regressions
 # behind cascading failures.
+#
+# 🔴 Capture the exit code with `cmd || rc=$?`, NOT `if ! cmd; then rc=$?`.
+# In the body of `if ! cmd`, `$?` is the status of the NEGATION (always 0 when
+# the branch is taken), so `EXIT=$?` silently recorded 0 and the job reported
+# SUCCESS while the log said "=== FAILED in ... ===". That masked a hard
+# install failure in CI for months (caught 2026-11 on PR #85).
 EXIT=0
 for SCRIPT in "$@"; do
   echo "=== ${SCRIPT} ==="
-  if ! docker exec "${DOCKER_ENV_ARGS[@]}" -w /opt/litesoup "${NAME}" bash "test/integration/${SCRIPT}"; then
-    EXIT=$?
+  rc=0
+  docker exec "${DOCKER_ENV_ARGS[@]}" -w /opt/litesoup "${NAME}" bash "test/integration/${SCRIPT}" || rc=$?
+  if [ "${rc}" -ne 0 ]; then
+    EXIT="${rc}"
     echo "=== FAILED in ${SCRIPT} (exit ${EXIT}) ==="
     break
   fi

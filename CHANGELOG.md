@@ -8,6 +8,70 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- **The CI integration harness swallowed every failure — jobs reported SUCCESS
+  while their log said `=== FAILED in 01_install_stack.sh (exit 0) ===`.**
+  `test/docker/run-integration.sh` captured the status as
+  `if ! docker exec ...; then EXIT=$?` — but inside the body of `if ! cmd`, `$?`
+  is the status of the *negation* (always 0 when the branch is taken), so `EXIT`
+  was always 0. Every integration job from 2026-08-14 onward was green-but-broken;
+  the suite had not actually passed since ~2026-08-03. Now uses
+  `cmd || rc=$?` and exits non-zero. (`test/docker/run-integration.sh`)
+
+- **`harden-fail2ban.sh` aborted the install at stage 13 on every fresh box: it
+  reloaded fail2ban immediately after starting it.** `systemctl enable --now
+  fail2ban` returns before the server socket is up, so the next line's
+  `systemctl reload fail2ban` → `fail2ban-client reload` died with
+  `ERROR Could not find server` (exit 255), which `set -e` turned into a fatal
+  error. The reload is also pointless right after a start — the new jails are
+  already loaded. Now the reload only runs when the service was ALREADY active
+  (i.e. a genuine config change on a running server), and a failed start dumps
+  `systemctl status` + the journal instead of the bare "Job for fail2ban.service
+  failed." (`harden/harden-fail2ban.sh`)
+
+- **`verify_ssh_access` and `harden-ssh.sh` misread `systemctl is-enabled` for a
+  masked unit.** `systemctl is-enabled ssh.socket` prints `masked` AND exits
+  non-zero, so `$(... || echo unknown)` captured two lines (`"masked\nunknown"`).
+  The `!= masked` comparison then always failed: `verify_ssh_access` refused to
+  declare the install complete (stage 17) and `harden-ssh.sh` needlessly re-ran
+  the socket transition on every invocation. Now captures the first line only,
+  with `|| true` so `pipefail` does not trip the ERR trap.
+  (`install/install-stack.sh`, `harden/harden-ssh.sh`)
+
+- **`site-create.sh` aborted on the FIRST site of a fresh box: `crontab -l` exits
+  1 when the user has no crontab yet.** Under `set -e` + `pipefail` that killed
+  the whole site-create after the site was already half-built. Also degrades to a
+  warning when the `cron` package is absent instead of dying on
+  `crontab: command not found`. (`site/site-create.sh`)
+
+- **The integration tests still called `site-create.sh --domain=...` without the
+  now-required `--name`.** `--name` became mandatory in e005eab (2026-08-14) and
+  the tests were never updated, so `02_site_create.sh` exited 64 and
+  `03_site_delete.sh` could not set up its fixture. Names are slugs, so the
+  fixtures use `example-test` / `second-test` while the domains stay
+  `example.test` / `second.test`. (`test/integration/02_site_create.sh`,
+  `test/integration/03_site_delete.sh`)
+
+- **The integration test image was missing `openssh-server` and `cron`, so
+  `harden-ssh.sh` failed at stage 11 and `site-create.sh` failed on crontab.**
+  `install-stack.sh` runs `harden-ssh.sh`, which exits 1 when
+  `/etc/ssh/sshd_config.d` is absent (`is openssh-server installed?`), and
+  `site-create.sh` needs `crontab` for the staggered wp-cron. Real boxes always
+  have both — openssh-server is how the operator connects — so the container had
+  diverged from production. Added both to
+  `test/docker/Dockerfile.ubuntu2404-systemd`, which also un-masks the failures
+  the harness had been hiding.
+
+- **`install-stack.sh` enabled the `000-default.conf` catch-all but never reloaded
+  Apache, leaving port 443 serving PLAIN HTTP.** `a2ensite 000-default.conf` only
+  drops the `sites-enabled` symlink; without a reload the `_default_:443` vhost never
+  takes effect, so every `https://` request failed with `curl: (35) ... wrong version
+  number` (HTTP `000`) while `http://` worked — and `ss -tlnp` still showed Apache
+  listening on `*:443` with `a2query -m ssl` reporting `enabled`, so the box looked
+  healthy. Stage 17 now runs `ensure_pkgs ssl-cert` **before** `a2ensite` (the vhost
+  references the snakeoil cert, so configtest would fail otherwise), then
+  `apache2ctl configtest` → `systemctl reload apache2` → a local
+  `curl -sk https://127.0.0.1/` probe that logs an error if the code is still `000`.
+  Caught on vn19 (2026-11) during a fresh install. (`install/install-stack.sh`)
 - **`cloudflare-realip.conf` was generated with the last IPv4 range glued onto the
   first IPv6 range.** Both `cloudflare.com/ips-v4|v6` endpoints return a body with no
   trailing newline, so piping them back-to-back produced

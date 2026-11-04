@@ -495,6 +495,15 @@ enable_system_wp_cron() {
     log_warn "site-create: skipping system cron for ${SITE_NAME} (owner ${SITE_USER} != ${DEFAULT_SITE_USER}); add a cron manually"
     return 0
   fi
+  # `crontab` comes from the `cron` package. A minimal image (or a box where cron
+  # was never installed) has no crontab binary, and the pipeline below would then
+  # abort the whole site-create under `set -e` — leaving a half-created site.
+  # Degrade to a warning: the site is still fully functional, WP-Cron just runs
+  # on page loads instead of the staggered system schedule.
+  if ! command -v crontab >/dev/null 2>&1; then
+    log_warn "site-create: crontab not found (cron package missing) — skipping system wp-cron for ${SITE_NAME}"
+    return 0
+  fi
   local runner=/opt/litesoup/wp-cron-runner.sh
   if [ ! -x "${runner}" ]; then
     mkdir -p /var/log/wp-cron /run/locks
@@ -518,10 +527,18 @@ enable_system_wp_cron() {
   done
   [ -n "${chosen}" ] || chosen="$(( RANDOM % 30 ))"
   local cron_line="${chosen},$((chosen+30)) * * * * ${runner} ${SITE_NAME}"
+  # 🔴 `crontab -l` exits 1 when the user has NO crontab yet — which is exactly
+  # the state of a fresh `litesoup` user, i.e. the FIRST site-create on a new
+  # box. Under `set -e` + `pipefail` that non-zero status aborted the whole
+  # site-create (after the site was already half-built). `|| true` makes an
+  # empty crontab a normal starting point.
+  local existing_cron
+  existing_cron="$(crontab -u "${DEFAULT_SITE_USER}" -l 2>/dev/null || true)"
   {
-    crontab -u "${DEFAULT_SITE_USER}" -l 2>/dev/null | grep -v "wp-cron-runner.sh ${SITE_NAME}"
+    printf '%s\n' "${existing_cron}" | grep -v "wp-cron-runner.sh ${SITE_NAME}" || true
     printf '%s\n' "${cron_line}"
-  } | crontab -u "${DEFAULT_SITE_USER}" -
+  } | crontab -u "${DEFAULT_SITE_USER}" - \
+    || { log_warn "site-create: could not install system wp-cron for ${SITE_NAME}"; return 0; }
   log_info "site-create: added system wp-cron for ${SITE_NAME} → '${cron_line}'"
 }
 

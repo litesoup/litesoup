@@ -224,11 +224,41 @@ EOF
   fi
 
   # 4. Enable + start fail2ban.
-  run_or_dryrun systemctl enable --now fail2ban
+  #
+  # Detect whether this call actually STARTED the service: if it did, the jails
+  # written above are already loaded and the step-5 reload is both redundant and
+  # racy (see below).
+  local started_here=0
+  if [ "${DRY_RUN}" != "1" ]; then
+    if ! systemctl is-active --quiet fail2ban; then
+      started_here=1
+    fi
+    if ! systemctl enable --now fail2ban; then
+      # Bare "Job for fail2ban.service failed." tells us nothing — dump the
+      # journal so the next person does not have to re-derive it.
+      log_error "fail2ban: systemctl enable --now failed — diagnostics below"
+      systemctl status fail2ban --no-pager -l 2>&1 | tail -30 >&2 || true
+      journalctl -u fail2ban --no-pager -n 50 2>&1 | tail -40 >&2 || true
+      exit 1
+    fi
+  else
+    run_or_dryrun systemctl enable --now fail2ban
+  fi
 
-  # 5. Reload only if any managed file changed.
-  if [ "${changed}" = "1" ]; then
+  # 5. Reload only if any managed file changed AND the service was already
+  #    running before this call.
+  #
+  # 🔴 Do NOT reload straight after `enable --now`: systemd starts fail2ban
+  # asynchronously, so the immediately-following `fail2ban-client reload` runs
+  # before the server socket is up and dies with "ERROR Could not find server"
+  # (exit 255). Uncaught under `set -e`, that aborted the whole install at stage
+  # 13. It is also pointless — a freshly started server has already read the new
+  # jail files. Observed deterministically in CI and on a fresh container
+  # (2026-11).
+  if [ "${changed}" = "1" ] && [ "${started_here}" = "0" ]; then
     run_or_dryrun systemctl reload fail2ban
+  elif [ "${changed}" = "1" ]; then
+    log_info "fail2ban: started with the new jails — reload not needed"
   else
     log_info "fail2ban: no jail file changes — skipping reload"
   fi
